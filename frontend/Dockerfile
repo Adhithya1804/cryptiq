@@ -29,6 +29,13 @@ RUN npm run build
 ########################################################################
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
+# Patch OS packages that already have a fixed CVE in the base image's Alpine
+# release (e.g. CVE-2026-31789 in libssl3 / libcrypto3). apk needs root; the
+# base image otherwise runs as uid 101.
+USER root
+RUN apk upgrade --no-cache libssl3 libcrypto3
+USER 101
+
 # Image already runs as uid 101 (nginx) and listens on 8080.
 COPY --chown=nginx:nginx nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
