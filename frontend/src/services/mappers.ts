@@ -5,20 +5,29 @@
  */
 
 import type {
+  ApiContextualAssessmentDto,
+  ApiDomainProfileDto,
   ApiExplanationDto,
   ApiFindingDto,
   ApiFindingSummaryDto,
   ApiInspectionDto,
+  ApiKnowledgeSourceDto,
   ApiRepositoryDto,
   ApiReviewQueueItemDto,
 } from '@/types/api';
 import {
+  isAssessmentDecision,
+  isContextualRole,
   isCryptographicRole,
   isFindingConfidence,
   isFindingPriority,
   isFindingReviewStatus,
   isInspectionStatus,
+  type AssessmentDecision,
+  type ContextualAssessment,
+  type ContextualRole,
   type CryptographicRole,
+  type DomainProfile,
   type EvidenceLine,
   type Finding,
   type FindingConfidence,
@@ -28,6 +37,7 @@ import {
   type FindingSummary,
   type Inspection,
   type InspectionStatus,
+  type KnowledgeSource,
   type Repository,
   type ReviewQueueItem,
   type SeverityBreakdown,
@@ -223,5 +233,78 @@ export function mapExplanation(dto: ApiExplanationDto): FindingExplanation {
     limitations: dto.limitations ?? [],
     cached: dto.cached ?? false,
     generatedAt: dto.generated_at,
+  };
+}
+
+export function toAssessmentDecision(value: string | null | undefined): AssessmentDecision {
+  const token = (value ?? '').trim().toUpperCase();
+  return isAssessmentDecision(token) ? token : 'INSUFFICIENT_CONTEXT';
+}
+
+export function toContextualRole(value: string | null | undefined): ContextualRole {
+  const token = (value ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return isContextualRole(token) ? token : 'UNKNOWN';
+}
+
+export function mapKnowledgeSource(dto: ApiKnowledgeSourceDto): KnowledgeSource {
+  return {
+    documentId: dto.document_id,
+    chunkId: dto.chunk_id,
+    title: dto.title,
+    publisher: dto.publisher,
+    url: dto.url,
+    section: dto.section,
+    version: dto.version,
+    content: dto.content,
+    relevanceScore: dto.relevance_score ?? 0,
+  };
+}
+
+export function mapDomainProfile(
+  dto: ApiDomainProfileDto | Record<string, unknown> | undefined,
+): DomainProfile | null {
+  if (!dto || typeof dto !== 'object') return null;
+  const d = dto as ApiDomainProfileDto;
+  return {
+    domain: d.domain ?? 'GENERAL_SOFTWARE',
+    latencySensitivity: d.latency_sensitivity ?? 'UNKNOWN',
+    bandwidthConstraint: d.bandwidth_constraint ?? 'UNKNOWN',
+    computeConstraint: d.compute_constraint ?? 'UNKNOWN',
+    memoryConstraint: d.memory_constraint ?? 'UNKNOWN',
+    batteryConstraint: d.battery_constraint ?? 'UNKNOWN',
+    offlineOperation: d.offline_operation ?? null,
+    signatureFrequency: d.signature_frequency ?? null,
+    verificationFrequency: d.verification_frequency ?? null,
+    payloadSizeSensitivity: d.payload_size_sensitivity ?? 'UNKNOWN',
+    dataLongevity: d.data_longevity ?? null,
+    regulatoryRequirements: d.regulatory_requirements ?? [],
+    platformConstraints: d.platform_constraints ?? [],
+    interoperabilityConstraints: d.interoperability_constraints ?? [],
+  };
+}
+
+export function mapContextualAssessment(dto: ApiContextualAssessmentDto): ContextualAssessment {
+  return {
+    id: dto.id ?? null,
+    findingId: dto.finding_id,
+    fingerprint: dto.fingerprint,
+    assessment: toAssessmentDecision(dto.assessment),
+    confidence: toConfidence(dto.confidence),
+    contextualRole: toContextualRole(dto.contextual_role),
+    rationale: dto.rationale,
+    pqcMigrationRequired: Boolean(dto.pqc_migration_required),
+    migrationCandidate: dto.migration_candidate ?? null,
+    alternatives: dto.alternatives ?? [],
+    engineeringTradeoffs: dto.engineering_tradeoffs ?? [],
+    requiredContext: dto.required_context ?? [],
+    evidenceInterpretation: dto.evidence_interpretation ?? '',
+    knowledgeSources: (dto.knowledge_sources ?? []).map(mapKnowledgeSource),
+    limitations: dto.limitations ?? [],
+    domainProfile: mapDomainProfile(dto.domain_profile),
+    generatedBy: dto.generated_by ?? 'heuristic_advisor',
+    model: dto.model ?? null,
+    promptVersion: dto.prompt_version ?? null,
+    cached: Boolean(dto.cached),
+    createdAt: dto.created_at ?? null,
   };
 }

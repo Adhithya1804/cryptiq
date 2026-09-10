@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.dependencies import DbSession
 from app.engine.context.models import DomainProfile
@@ -75,12 +75,12 @@ def create_finding_migration_assessment(
 def get_finding_migration_assessment(
     finding_id: str,
     session: DbSession,
-    domain: str | None = None,
+    domain: str | None = Query(default=None, max_length=64),
 ) -> ApiContextualAssessmentDto:
     """Retrieve or generate contextual migration assessment with optional domain filter."""
     finding = scans.get_finding(session, finding_id)
     scan = scans.get_scan(session, finding.scan_id)
-    profile = DomainProfile(domain=domain.upper()) if domain else DomainProfile()
+    profile = DomainProfile.from_dict({"domain": domain}) if domain else DomainProfile()
     return generate_migration_assessment(session, finding, scan, domain_profile=profile)
 
 

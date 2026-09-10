@@ -12,7 +12,6 @@ import logging
 from dataclasses import replace
 
 from app.engine.context.models import (
-    AssessmentConfidence,
     AssessmentDecision,
     ContextualAssessment,
     ContextualRole,
@@ -32,6 +31,7 @@ HASH_ROLES = frozenset(
         ContextualRole.DATA_INTEGRITY,
         ContextualRole.HASHING,
         ContextualRole.PASSWORD_DERIVATION,
+        ContextualRole.MAC,
     }
 )
 
@@ -83,6 +83,9 @@ def enforce_guardrails(
             limitations.append(
                 "Guardrail correction applied: Incompatible public-key algorithm rejected for hash role."
             )
+            tradeoffs.append(
+                "Category error prevented: Public-key signatures/KEMs are not replacements for cryptographic hashes."
+            )
 
     # Invariant 2: Key establishment must NEVER be mapped to digital signature algorithms
     elif role == ContextualRole.KEY_ESTABLISHMENT or deterministic_role.upper() == "KEY_ESTABLISHMENT":
@@ -123,23 +126,36 @@ def enforce_guardrails(
             )
 
     # Invariant 4: Symmetric encryption must NEVER be replaced with public-key algorithms
-    elif role == ContextualRole.ENCRYPTION or deterministic_role.upper() == "SYMMETRIC_ENCRYPTION":
-        if _matches_family(candidate, SIGNATURE_SCHEMES) or _matches_family(candidate, KEM_SCHEMES):
-            logger.warning(
-                "Guardrail triggered: Attempted to recommend public-key %s for symmetric cipher %s",
-                candidate,
-                deterministic_algorithm,
-            )
-            candidate = None
-            migration_required = False
-            decision = AssessmentDecision.KEEP
-            rationale = (
-                f"{deterministic_algorithm} is a symmetric cipher. Symmetric ciphers are not broken "
-                "by Shor's algorithm. Review key length and mode rather than replacing the cipher."
-            )
-            limitations.append(
-                "Guardrail correction applied: Public-key algorithm rejected for symmetric cipher."
-            )
+    elif (
+        role == ContextualRole.ENCRYPTION or deterministic_role.upper() == "SYMMETRIC_ENCRYPTION"
+    ) and (
+        _matches_family(candidate, SIGNATURE_SCHEMES) or _matches_family(candidate, KEM_SCHEMES)
+    ):
+        logger.warning(
+            "Guardrail triggered: Attempted to recommend public-key %s for symmetric cipher %s",
+            candidate,
+            deterministic_algorithm,
+        )
+        candidate = None
+        migration_required = False
+        decision = AssessmentDecision.KEEP
+        rationale = (
+            f"{deterministic_algorithm} is a symmetric cipher. Symmetric ciphers are not broken "
+            "by Shor's algorithm. Review key length and mode rather than replacing the cipher."
+        )
+        limitations.append(
+            "Guardrail correction applied: Public-key algorithm rejected for symmetric cipher."
+        )
+
+    # Filter alternatives: if hash or symmetric cipher, remove public key schemes
+    if role in HASH_ROLES or deterministic_role.upper() in ("HASH", "SYMMETRIC_ENCRYPTION"):
+        filtered_alts = tuple(
+            alt
+            for alt in assessment.alternatives
+            if not (_matches_family(alt, SIGNATURE_SCHEMES) or _matches_family(alt, KEM_SCHEMES))
+        )
+    else:
+        filtered_alts = tuple(assessment.alternatives)
 
     # If decision is KEEP, candidate should always be None and migration_required False
     if decision == AssessmentDecision.KEEP:
@@ -152,6 +168,7 @@ def enforce_guardrails(
         migration_candidate=candidate,
         pqc_migration_required=migration_required,
         rationale=rationale,
+        alternatives=filtered_alts,
         engineering_tradeoffs=tuple(tradeoffs),
         limitations=tuple(limitations),
     )

@@ -20,6 +20,23 @@ from app.engine.fingerprints import fingerprint
 from app.main import create_app
 
 
+@pytest.fixture(autouse=True)
+def _relax_rate_limit(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep the per-client rate limiter out of the way of the general suite.
+
+    The limiter ships enabled with production limits; a test that legitimately
+    makes dozens of calls from the one ``testclient`` identity would otherwise
+    hit ``429``. Tests that exercise the limiter itself construct their own
+    app with explicit low limits. ``app.rate_limit`` has its own unit tests.
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def client() -> TestClient:
     """Return a test client bound to a fresh application instance."""

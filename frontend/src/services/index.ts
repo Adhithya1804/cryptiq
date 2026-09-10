@@ -12,6 +12,7 @@ export { fetchHistory, fetchInspection, submitInspection, submitScan } from './i
 export {
   fetchFinding,
   fetchFindingExplanation,
+  fetchMigrationAssessment,
   submitFindingReview,
 } from './findings';
 export { fetchReviewQueue } from './review';
@@ -22,6 +23,7 @@ export {
   getScan,
   getFindings,
   getFinding,
+  getMigrationAssessment,
   getReviewQueue,
   updateReviewItem,
 } from './client';

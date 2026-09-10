@@ -81,6 +81,32 @@ export const REVIEW_PATHS = [
 ] as const;
 export type ReviewPath = (typeof REVIEW_PATHS)[number];
 
+/** Context-aware migration assessment decision. */
+export const ASSESSMENT_DECISIONS = [
+  'KEEP',
+  'REVIEW',
+  'MIGRATE',
+  'INSUFFICIENT_CONTEXT',
+] as const;
+export type AssessmentDecision = (typeof ASSESSMENT_DECISIONS)[number];
+
+/** Fine-grained contextual cryptographic role. */
+export const CONTEXTUAL_ROLES = [
+  'CONTENT_ADDRESSING',
+  'DATA_INTEGRITY',
+  'EPHEMERAL_COMMUNICATION',
+  'FIRMWARE_SIGNING',
+  'LONG_TERM_STORAGE',
+  'SECURE_BOOT',
+  'KEY_ESTABLISHMENT',
+  'DIGITAL_SIGNATURE',
+  'SYMMETRIC_ENCRYPTION',
+  'HASH',
+  'PROTOCOL',
+  'UNKNOWN',
+] as const;
+export type ContextualRole = (typeof CONTEXTUAL_ROLES)[number];
+
 /* ------------------------------------------------------------- entities --- */
 
 /** A repository Cryptiq knows about (Projects screen row). */
@@ -273,6 +299,62 @@ export interface FindingExplanation {
   readonly generatedAt: string | null;
 }
 
+/** Domain profile specifying application context and engineering constraints. */
+export interface DomainProfile {
+  readonly domain: string;
+  readonly latencySensitivity: string;
+  readonly bandwidthConstraint: string;
+  readonly computeConstraint: string;
+  readonly memoryConstraint: string;
+  readonly batteryConstraint: string;
+  readonly offlineOperation: boolean | null;
+  readonly signatureFrequency?: string | null;
+  readonly verificationFrequency?: string | null;
+  readonly payloadSizeSensitivity: string;
+  readonly dataLongevity: string | null;
+  readonly regulatoryRequirements: readonly string[];
+  readonly platformConstraints: readonly string[];
+  readonly interoperabilityConstraints: readonly string[];
+}
+
+/** Authoritative cryptographic standard source / chunk. */
+export interface KnowledgeSource {
+  readonly documentId: string;
+  readonly chunkId: string;
+  readonly title: string;
+  readonly publisher: string;
+  readonly url: string;
+  readonly section: string;
+  readonly version: string;
+  readonly content: string;
+  readonly relevanceScore: number;
+}
+
+/** Full context-aware migration assessment of a finding. */
+export interface ContextualAssessment {
+  readonly id: string | null;
+  readonly findingId: string;
+  readonly fingerprint: string;
+  readonly assessment: AssessmentDecision;
+  readonly confidence: FindingConfidence;
+  readonly contextualRole: ContextualRole;
+  readonly rationale: string;
+  readonly pqcMigrationRequired: boolean;
+  readonly migrationCandidate: string | null;
+  readonly alternatives: readonly string[];
+  readonly engineeringTradeoffs: readonly string[];
+  readonly requiredContext: readonly string[];
+  readonly evidenceInterpretation: string;
+  readonly knowledgeSources: readonly KnowledgeSource[];
+  readonly limitations: readonly string[];
+  readonly domainProfile: DomainProfile | null;
+  readonly generatedBy: string;
+  readonly model: string | null;
+  readonly promptVersion: string | null;
+  readonly cached: boolean;
+  readonly createdAt: string | null;
+}
+
 /* ---------------------------------------------------------- type guards --- */
 
 export function isInspectionStatus(value: string): value is InspectionStatus {
@@ -289,6 +371,12 @@ export function isCryptographicRole(value: string): value is CryptographicRole {
 }
 export function isFindingReviewStatus(value: string): value is FindingReviewStatus {
   return (FINDING_REVIEW_STATUSES as readonly string[]).includes(value);
+}
+export function isAssessmentDecision(value: string): value is AssessmentDecision {
+  return (ASSESSMENT_DECISIONS as readonly string[]).includes(value);
+}
+export function isContextualRole(value: string): value is ContextualRole {
+  return (CONTEXTUAL_ROLES as readonly string[]).includes(value);
 }
 
 export function isClosedReviewStatus(status: FindingReviewStatus): boolean {

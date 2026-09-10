@@ -180,6 +180,63 @@ export interface ApiExplanationDto {
   generated_at: string | null;
 }
 
+export interface ApiDomainProfileDto {
+  domain?: string;
+  latency_sensitivity?: string;
+  bandwidth_constraint?: string;
+  compute_constraint?: string;
+  memory_constraint?: string;
+  battery_constraint?: string;
+  offline_operation?: boolean | null;
+  signature_frequency?: string | null;
+  verification_frequency?: string | null;
+  payload_size_sensitivity?: string;
+  data_longevity?: string | null;
+  regulatory_requirements?: string[];
+  platform_constraints?: string[];
+  interoperability_constraints?: string[];
+}
+
+export interface ApiKnowledgeSourceDto {
+  document_id: string;
+  chunk_id: string;
+  title: string;
+  publisher: string;
+  url: string;
+  section: string;
+  version: string;
+  content: string;
+  relevance_score?: number;
+}
+
+export interface ApiContextualAssessmentDto {
+  id?: string | null;
+  finding_id: string;
+  fingerprint: string;
+  assessment: string;
+  confidence: string;
+  contextual_role: string;
+  rationale: string;
+  pqc_migration_required: boolean;
+  migration_candidate?: string | null;
+  alternatives?: string[];
+  engineering_tradeoffs?: string[];
+  required_context?: string[];
+  evidence_interpretation?: string;
+  knowledge_sources?: ApiKnowledgeSourceDto[];
+  limitations?: string[];
+  domain_profile?: ApiDomainProfileDto | Record<string, unknown>;
+  generated_by?: string;
+  model?: string | null;
+  prompt_version?: string | null;
+  cached?: boolean;
+  created_at?: string | null;
+}
+
+export interface CreateMigrationAssessmentRequest {
+  domain_profile?: ApiDomainProfileDto | undefined;
+}
+
 export interface ApiListEnvelope<T> {
   items: T[];
   next_cursor?: string | null;

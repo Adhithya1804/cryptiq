@@ -137,7 +137,7 @@ def extract_context(
                 lo = max(0, start_line - 16)
                 hi = min(len(lines), start_line + 15)
                 surrounding_text = "\n".join(lines[lo:hi])
-        except Exception:
+        except OSError:
             surrounding_text = source_excerpt
 
     # Gather search corpus for tokens: path, function, class, and code window

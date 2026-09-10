@@ -59,4 +59,4 @@ class MigrationAssessmentRecord(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    finding: Mapped["Finding"] = relationship(back_populates="migration_assessments")
+    finding: Mapped[Finding] = relationship(back_populates="migration_assessments")

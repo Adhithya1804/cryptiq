@@ -14,6 +14,8 @@
  */
 
 import type {
+  ApiContextualAssessmentDto,
+  ApiDomainProfileDto,
   ApiFindingDto,
   ApiFindingSummaryDto,
   ApiInspectionDto,
@@ -22,9 +24,11 @@ import type {
   ApiReviewBlock,
   ApiReviewQueueItemDto,
   CreateInspectionRequest,
+  CreateMigrationAssessmentRequest,
   UpdateReviewItemRequest,
 } from '@/types/api';
 import type {
+  ContextualAssessment,
   Finding,
   FindingFilters,
   FindingReview,
@@ -39,6 +43,7 @@ import type { ValidatedInspectionInput } from '@/utils/validation';
 import { assertBackendConfigured, isBackendConfigured } from './config';
 import { request, type RequestOptions } from './http';
 import {
+  mapContextualAssessment,
   mapFinding,
   mapFindingSummary,
   mapInspection,
@@ -122,6 +127,26 @@ export async function getFinding(findingId: string, signal?: AbortSignal): Promi
   assertBackendConfigured();
   const dto = await request<ApiFindingDto>(`/findings/${enc(findingId)}`, signal ? { signal } : {});
   return mapFinding(dto);
+}
+
+export async function getMigrationAssessment(
+  findingId: string,
+  domainProfile?: ApiDomainProfileDto,
+  signal?: AbortSignal,
+): Promise<ContextualAssessment> {
+  assertBackendConfigured();
+  const payload: CreateMigrationAssessmentRequest = domainProfile
+    ? { domain_profile: domainProfile }
+    : {};
+  const dto = await request<ApiContextualAssessmentDto>(
+    `/findings/${enc(findingId)}/migration-assessment`,
+    {
+      method: 'POST',
+      body: payload,
+      ...(signal ? { signal } : {}),
+    },
+  );
+  return mapContextualAssessment(dto);
 }
 
 /* -------------------------------------------------------- review queue --- */
