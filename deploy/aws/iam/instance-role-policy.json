@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Reference copy of the EC2 instance role's permissions, for review.",
+    "The authoritative definition is inline in cloudformation/cryptiq-demo.yaml",
+    "(resources are resolved there with account/region/log-group ARNs).",
+    "",
+    "The role also attaches the AWS managed policy",
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore - the AWS-documented",
+    "baseline for SSM Session Manager. It is NOT an administrator policy: it",
+    "permits the SSM agent's own API calls, ssm:UpdateInstanceInformation, and a",
+    "scoped ssmmessages / ec2messages / s3 (SSM binaries) / kms set. No EC2, IAM,",
+    "or account-wide permissions are granted anywhere on this role."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudWatchLogsForDemoGroupsOnly",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:*:log-group:/cryptiq/backend",
+        "arn:aws:logs:*:*:log-group:/cryptiq/backend:*",
+        "arn:aws:logs:*:*:log-group:/cryptiq/frontend",
+        "arn:aws:logs:*:*:log-group:/cryptiq/frontend:*",
+        "arn:aws:logs:*:*:log-group:/cryptiq/nginx",
+        "arn:aws:logs:*:*:log-group:/cryptiq/nginx:*",
+        "arn:aws:logs:*:*:log-group:/cryptiq/bootstrap",
+        "arn:aws:logs:*:*:log-group:/cryptiq/bootstrap:*"
+      ]
+    },
+    {
+      "Sid": "ReadCryptiqSecureParameters",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:*:*:parameter/cryptiq/*"
+    },
+    {
+      "Sid": "DecryptSecureStringWithDefaultSsmKey",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:*:*:alias/aws/ssm"
+    }
+  ]
+}

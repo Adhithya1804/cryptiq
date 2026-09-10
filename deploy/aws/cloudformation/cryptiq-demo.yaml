@@ -1,0 +1,198 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cryptiq - temporary single-instance hackathon demo. One EC2 instance in a
+  public subnet of an existing VPC runs the existing Docker Compose stack
+  (nginx :80 -> React frontend + FastAPI backend + in-process worker + SQLite
+  on a dedicated encrypted EBS volume). Operator access is SSM Session Manager
+  only (no SSH, no key pair). Container and bootstrap logs ship to CloudWatch
+  with short retention. Optional secrets come from SSM Parameter Store via the
+  instance role. Not a production architecture - see deploy/aws/README.md.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC (the account's default VPC is fine).
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A PUBLIC subnet in that VPC (auto-assign public IPv4 enabled).
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large]
+    Description: t3.medium is the tested size (2 vCPU / 4 GiB).
+  RepoUrl:
+    Type: String
+    Description: Public git URL of this repository (cloned on first boot).
+  RepoRef:
+    Type: String
+    Default: main
+    Description: Branch or tag to deploy. Prefer a pinned tag for a demo.
+  AllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach TCP 80. Narrow it to the demo audience if you can.
+    AllowedPattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$
+  LogRetentionDays:
+    Type: Number
+    Default: 3
+    AllowedValues: [1, 3, 5, 7, 14]
+    Description: CloudWatch Logs retention for the demo. Keep it short.
+  DataVolumeSizeGiB:
+    Type: Number
+    Default: 10
+    MinValue: 5
+    MaxValue: 50
+    Description: Size of the encrypted EBS volume that holds the SQLite database.
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 x86_64 (resolved automatically).
+
+Resources:
+
+  # --- CloudWatch log groups (deleted with the stack) --------------------- #
+  BackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /cryptiq/backend
+      RetentionInDays: !Ref LogRetentionDays
+  FrontendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /cryptiq/frontend
+      RetentionInDays: !Ref LogRetentionDays
+  NginxLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /cryptiq/nginx
+      RetentionInDays: !Ref LogRetentionDays
+  BootstrapLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /cryptiq/bootstrap
+      RetentionInDays: !Ref LogRetentionDays
+
+  # --- IAM: least privilege for SSM + CloudWatch Logs + scoped params ----- #
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      # AWS-recommended baseline for Session Manager. This is NOT an admin
+      # policy: it grants the SSM agent's own calls plus ssm:UpdateInstance*
+      # and a scoped s3/kms set for the SSM data channel.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: cryptiq-cloudwatch-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !GetAtt BackendLogGroup.Arn
+                  - !GetAtt FrontendLogGroup.Arn
+                  - !GetAtt NginxLogGroup.Arn
+                  - !GetAtt BootstrapLogGroup.Arn
+                  - !Sub "${BackendLogGroup.Arn}:*"
+                  - !Sub "${FrontendLogGroup.Arn}:*"
+                  - !Sub "${NginxLogGroup.Arn}:*"
+                  - !Sub "${BootstrapLogGroup.Arn}:*"
+        - PolicyName: cryptiq-ssm-parameters
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cryptiq/*
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  # --- Network: only TCP 80 inbound ------------------------------------- #
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Cryptiq demo - public HTTP only. No 22 / 8000 / 5432.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedCidr
+          Description: Public demo frontend + /api proxy
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Outbound for GitHub, Gemini, SSM, CloudWatch, package install
+      Tags:
+        - { Key: Name, Value: cryptiq-demo }
+
+  # --- The instance ---------------------------------------------------- #
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SecurityGroup]
+      # No KeyName: administration is via SSM Session Manager only.
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+        - DeviceName: /dev/sdf
+          Ebs:
+            VolumeSize: !Ref DataVolumeSizeGiB
+            VolumeType: gp3
+            Encrypted: true
+            # Temporary demo: the SQLite volume is discarded on teardown.
+            DeleteOnTermination: true
+      Tags:
+        - { Key: Name, Value: cryptiq-demo }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > >(tee /var/log/cloud-init-output.log) 2>&1
+          dnf install -y git
+          rm -rf /opt/cryptiq/app
+          mkdir -p /opt/cryptiq
+          git clone --depth 1 --branch ${RepoRef} ${RepoUrl} /opt/cryptiq/app
+          cd /opt/cryptiq/app
+          export AWS_REGION=${AWS::Region}
+          export CRYPTIQ_BOOTSTRAP_LOG_GROUP=/cryptiq/bootstrap
+          bash deploy/aws/user-data.sh
+
+Outputs:
+  PublicIp:
+    Description: Public IPv4 of the demo instance.
+    Value: !GetAtt Instance.PublicIp
+  PublicUrl:
+    Description: Open this in a browser.
+    Value: !Sub http://${Instance.PublicIp}/
+  InstanceId:
+    Value: !Ref Instance
+  SsmSessionCommand:
+    Description: Operator shell (no SSH).
+    Value: !Sub aws ssm start-session --target ${Instance} --region ${AWS::Region}

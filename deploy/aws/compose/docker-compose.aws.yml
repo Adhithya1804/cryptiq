@@ -1,0 +1,116 @@
+# Cryptiq — single-instance AWS demo stack.
+#
+# Run from the repository root on the EC2 host:
+#
+#   docker compose -f deploy/aws/compose/docker-compose.aws.yml up -d --build
+#
+# Differences from the local ./docker-compose.yml:
+#   * a public nginx :80 is the ONLY published port; it proxies / -> frontend
+#     and /api/ -> backend (see nginx.conf). The backend and frontend ports are
+#     never published to the host.
+#   * the frontend bundle is built with VITE_API_BASE_URL=/api/v1 so the browser
+#     is single-origin and there is no CORS to configure.
+#   * the backend runs the "production" profile: EXPOSE_API_DOCS=false and the
+#     in-flight scan cap / body-size limit at their configured values.
+#   * SQLite lives on a bind mount to /data, which the bootstrap script backs
+#     with a dedicated encrypted EBS volume — so findings survive container,
+#     compose and instance restarts.
+#   * container stdout ships to CloudWatch Logs via the awslogs driver
+#     (log groups /cryptiq/backend, /cryptiq/frontend, /cryptiq/nginx are
+#     created by the CloudFormation stack with 3-day retention).
+#
+# No secret is baked into any image. GEMINI_API_KEY (optional) is read from
+# /opt/cryptiq/.env, which the bootstrap script writes from SSM Parameter Store.
+
+name: cryptiq
+
+services:
+  backend:
+    build:
+      context: ../../../cryptiq
+      dockerfile: Dockerfile
+    image: cryptiq-backend:aws
+    restart: unless-stopped
+    env_file:
+      # Written by the bootstrap script from SSM Parameter Store (GEMINI_API_KEY
+      # if provisioned). Optional: the demo runs fine with no key — the AI
+      # explanation path returns a controlled 503 AI_EXPLANATION_UNAVAILABLE.
+      - path: /opt/cryptiq/.env
+        required: false
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: sqlite:////data/cryptiq.db
+      RUN_WORKER: "true"
+      EXPOSE_API_DOCS: "false"
+      LOG_LEVEL: INFO
+      MAX_IN_FLIGHT_SCANS: "10"
+      MAX_REQUEST_BODY_BYTES: "1000000"
+      # The browser reaches the API only through the same-origin nginx proxy,
+      # so no direct cross-origin call needs allow-listing.
+      CORS_ALLOW_ORIGINS: "http://localhost"
+    volumes:
+      - /data:/data
+    # No ports published — reachable only on the compose network (nginx, worker).
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: "/cryptiq/backend"
+        awslogs-create-group: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ../../../frontend
+      dockerfile: Dockerfile
+      args:
+        # Same-origin: the SPA calls /api/v1/... on whatever host served it.
+        VITE_API_BASE_URL: /api/v1
+    image: cryptiq-frontend:aws
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    # No ports published — nginx proxies to it on the compose network.
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: "/cryptiq/frontend"
+        awslogs-create-group: "false"
+    healthcheck:
+      test: ["CMD", "/bin/sh", "-c", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: "/cryptiq/nginx"
+        awslogs-create-group: "false"
+    healthcheck:
+      test: ["CMD", "/bin/sh", "-c", "wget -q -O /dev/null http://127.0.0.1:80/healthz || exit 1"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
