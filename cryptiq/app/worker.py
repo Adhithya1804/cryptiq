@@ -71,6 +71,12 @@ def _claim_next_job(session: Session) -> ScanJob | None:
         scan.status = ScanStatus.RUNNING
         scan.started_at = _now()
     session.commit()
+    logger.info(
+        "job %s claimed for scan %s (attempt %d)",
+        job.id,
+        job.scan_id,
+        job.attempt_count,
+    )
     return job
 
 
@@ -110,6 +116,8 @@ async def _execute(session: Session, job: ScanJob) -> None:
         canonical_url=repository.canonical_url,
     )
 
+    started = _now()
+    logger.info("scan %s started: %s/%s", scan.id, repository.owner, repository.name)
     provider = GitHubSourceProvider()
     async with ingest_commit(provider, reference, scan.commit_sha) as ingestion:
         result = await asyncio.to_thread(
@@ -126,7 +134,13 @@ async def _execute(session: Session, job: ScanJob) -> None:
     scan.status = ScanStatus.COMPLETED
     scan.completed_at = _now()
     session.commit()
-    logger.info("scan %s completed: %d findings", scan.id, scan.finding_count)
+    duration = (_now() - started).total_seconds()
+    logger.info(
+        "scan %s completed: %d findings in %.2fs",
+        scan.id,
+        scan.finding_count,
+        duration,
+    )
 
 
 async def run_next_job() -> bool:

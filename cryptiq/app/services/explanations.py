@@ -143,6 +143,11 @@ def generate_explanation(
     session.add(record)
     session.flush()
 
+    logger.info(
+        "gemini explanation requested for finding %s (model=%s)",
+        finding.id,
+        service.model,
+    )
     try:
         payload = service.explain(build_input(finding, scan))
     except GeminiError as exc:
@@ -152,6 +157,7 @@ def generate_explanation(
         session.commit()
         logger.warning("explanation for finding %s unavailable: %s", finding.id, exc)
         raise ExplanationUnavailableError() from exc
+    logger.info("gemini explanation completed for finding %s", finding.id)
 
     record.status = ExplanationStatus.COMPLETED
     record.payload = payload.model_dump()

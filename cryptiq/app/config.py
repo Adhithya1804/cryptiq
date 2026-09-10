@@ -18,6 +18,41 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./cryptiq.db"
 
+    # Root log level for the application's own loggers (``app.*``). Emitted to
+    # stdout so Docker / CloudWatch capture it. Without an explicit handler the
+    # default root level is WARNING and every ``logger.info`` is dropped.
+    log_level: str = "INFO"
+
+    # Expose the interactive API docs (``/docs``, ``/redoc``) and the raw
+    # ``/openapi.json``. Left on for local development; the AWS demo turns it
+    # off so the unauthenticated endpoint surface is minimal.
+    expose_api_docs: bool = True
+
+    # Reverse-proxy / app request body ceiling. A scan request is a tiny JSON
+    # object ({repository_url, commit_sha}); anything approaching this is abuse.
+    # Enforced both in nginx (client_max_body_size) and in-process so the limit
+    # holds regardless of how the app is fronted.
+    max_request_body_bytes: int = 1_000_000
+
+    # Bound on scans that are QUEUED or RUNNING at once. The demo endpoint is
+    # unauthenticated and single-instance; past this a submission is rejected
+    # with HTTP 429 until in-flight work drains. Completed and failed scans
+    # release capacity immediately. Not a distributed rate limiter.
+    max_in_flight_scans: int = 10
+
+    # SQLite pragmas applied per connection for file-backed databases (the
+    # AWS demo persists SQLite on an EBS volume). ``busy_timeout`` makes a
+    # writer wait briefly for a competing write instead of failing immediately
+    # with "database is locked" -- the realistic single-instance concern with
+    # one worker writing while the API reads. Both are no-ops for ``:memory:``.
+    #
+    # WAL is left OFF by default: no locking problem has been demonstrated in
+    # the suite or the audit, and enabling it adds -wal/-shm sidecar files and
+    # changes checkpoint behaviour. It can be turned on (SQLITE_WAL=true) if a
+    # concurrency problem ever shows up.
+    sqlite_busy_timeout_ms: int = 5_000
+    sqlite_wal: bool = False
+
     # Browser origins allowed to call the API. The Vite dev server is the
     # default; deployments set this explicitly (comma-separated) and never
     # rely on a wildcard. Value "*" is honoured only for local throwaway use.

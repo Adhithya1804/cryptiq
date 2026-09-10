@@ -222,7 +222,7 @@ bounded extraction are unchanged.
 
 | Suite | Before | After |
 |---|---|---|
-| Backend `pytest` | 759 passed / 34 skipped | **761 passed / 34 skipped** (+2: `/health/ready`) |
+| Backend `pytest` | 759 passed / 34 skipped | **825 passed / 34 skipped** (Docker `/health/ready`, then the AWS/demo-hardening suite) |
 | `ruff check .` | clean | clean |
 | Frontend `vitest` | 57 | **57** |
 | `tsc -b --noEmit` | clean | clean |

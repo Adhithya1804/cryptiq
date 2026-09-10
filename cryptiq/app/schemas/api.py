@@ -144,6 +144,10 @@ class ApiFindingDto(BaseModel):
 
     id: str
     scan_id: str
+    # The engine's stable, line-independent finding identity. Additive: lets a
+    # client (the CLI diff, SARIF fingerprints) track a finding across commits
+    # without re-deriving it.
+    fingerprint: str | None = None
     repository: ApiRepositoryRef
     commit_sha: str
     language: str = "Python"

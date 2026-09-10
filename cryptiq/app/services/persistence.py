@@ -67,6 +67,7 @@ def _finding_row(analyzed: AnalyzedFinding, scan_id: str) -> Finding:
         priority_score=analyzed.priority.score,
         priority_reasons=list(analyzed.priority.reasons),
         role_rationale=analyzed.role.rationale,
+        evidence_basis=match.evidence_basis.value if match.evidence_basis is not None else None,
     )
     finding.evidence = Evidence(
         repository_sha=analyzed.evidence.repository_sha,
@@ -77,6 +78,8 @@ def _finding_row(analyzed: AnalyzedFinding, scan_id: str) -> Finding:
         rule_id=analyzed.evidence.rule_id,
         parser_version=analyzed.evidence.parser_version,
         ruleset_version=analyzed.evidence.ruleset_version,
+        enclosing_function=match.enclosing_function,
+        enclosing_class=match.enclosing_class,
     )
     finding.impact_nodes = [
         ImpactNode(

@@ -149,6 +149,7 @@ def finding_dto(finding: Finding, scan: Scan, repository: Repository) -> ApiFind
     return ApiFindingDto(
         id=finding.id,
         scan_id=finding.scan_id,
+        fingerprint=finding.fingerprint,
         repository=repository_ref(repository),
         commit_sha=scan.commit_sha,
         language=LANGUAGE,
@@ -167,6 +168,8 @@ def finding_dto(finding: Finding, scan: Scan, repository: Repository) -> ApiFind
                 end_column=finding.end_column,
             ),
             source_excerpt=evidence.source_excerpt,
+            enclosing_function=evidence.enclosing_function,
+            enclosing_class=evidence.enclosing_class,
             parser_version=evidence.parser_version,
             ruleset_version=evidence.ruleset_version,
         ),
@@ -174,6 +177,7 @@ def finding_dto(finding: Finding, scan: Scan, repository: Repository) -> ApiFind
             role=finding.role.value,
             rationale=[finding.role_rationale] if finding.role_rationale else [],
             confidence=finding.confidence.value,
+            evidence_basis=finding.evidence_basis,
         ),
         migration=ApiMigrationBlock(
             review_path=review_path,

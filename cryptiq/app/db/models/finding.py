@@ -80,6 +80,10 @@ class Finding(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         JSON, nullable=False, default=list
     )
     role_rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Why the rule fired (e.g. DIRECT_MODULE_API): the ``EvidenceBasis`` token
+    # from the RuleMatch, stored so the hosted API's inference block matches the
+    # in-process CLI. Nullable for rows written before this column existed.
+    evidence_basis: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[FindingStatus] = mapped_column(
         enum_column(FindingStatus, "finding_status"),
         nullable=False,

@@ -2,14 +2,19 @@
 
 Compact tables and a finding-detail view that mirrors the API's evidence
 hierarchy. Nothing here computes anything; it only formats values that came
-from the backend, and shows ``N/A`` where the backend sent ``null`` or an
-empty list.
+from the backend or the in-process engine, and shows ``N/A`` where the value
+was ``null`` or an empty list.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.cli.diff import DiffResult
+    from app.cli.local import LocalScanMeta
+    from app.cli.results import CliFinding
 
 NA = "N/A"
 
@@ -175,3 +180,163 @@ def render_finding_detail(finding: dict[str, Any]) -> str:
         blocks.append(["Review", f"  {NA} (no review opened)"])
 
     return "\n\n".join("\n".join(block) for block in blocks)
+
+
+# --------------------------------------------------------------------------- #
+# common CLI result model (local + remote)
+# --------------------------------------------------------------------------- #
+
+_PRIORITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFORMATIONAL": 4}
+
+
+def render_cli_finding(finding: CliFinding) -> str:
+    """Render one normalised finding in OBSERVED -> REVIEW order.
+
+    Same block order the API uses and the task specifies. Values the engine or
+    API did not provide show as ``N/A``; nothing is invented.
+    """
+    line_range = value_or_na(finding.start_line)
+    if finding.end_line not in (None, finding.start_line):
+        line_range = f"{finding.start_line}-{finding.end_line}"
+
+    ident = finding.finding_id or finding.fingerprint or NA
+    blocks: list[list[str]] = [
+        [f"Finding {ident}", f"  fingerprint {value_or_na(finding.fingerprint)}"],
+        _section(
+            "OBSERVED",
+            [
+                ("Rule", finding.rule_id),
+                ("Algorithm", finding.algorithm),
+                ("API", finding.api),
+                ("Primitive", finding.primitive),
+                ("Library", finding.library),
+                ("Operation", finding.operation),
+                ("File", finding.file_path),
+                ("Lines", line_range),
+                ("Evidence", finding.source_excerpt),
+            ],
+        ),
+        _section(
+            "INFERENCE",
+            [
+                ("Role", finding.role),
+                ("Confidence", finding.confidence),
+                ("Basis", finding.evidence_basis),
+                ("Rationale", list(finding.role_rationale)),
+            ],
+        ),
+        _section(
+            "MIGRATION REVIEW",
+            [
+                ("PQC Family", finding.review_path),
+                ("Candidate", finding.is_migration_candidate),
+                ("Current", finding.migration_current),
+                ("Standards", finding.migration_rationale),
+            ],
+        ),
+        _section(
+            "IMPACT",
+            [
+                ("Scope", finding.impact_scope),
+                ("Nodes", list(finding.impact_nodes)),
+                ("Relationships", list(finding.impact_relationships)),
+            ],
+        ),
+        _section(
+            "MIGRATION REVIEW PRIORITY",
+            [
+                ("Level", finding.priority_level),
+                ("Score", finding.priority_score),
+                ("Reasons", list(finding.priority_reasons)),
+            ],
+        ),
+        _section(
+            "REVIEW",
+            [
+                ("Status", finding.review_status),
+                ("Assignee", finding.review_assignee),
+                ("Note", finding.review_note),
+                ("Updated", finding.review_updated_at),
+            ],
+        ),
+    ]
+    return "\n\n".join("\n".join(block) for block in blocks)
+
+
+def render_cli_findings_table(findings: Sequence[CliFinding]) -> str:
+    """A compact one-row-per-finding table for the scan summary."""
+    headers = ["PRIORITY", "SCORE", "ALGORITHM", "OPERATION", "ROLE", "FILE", "LINE"]
+    rows = [
+        [
+            value_or_na(f.priority_level),
+            value_or_na(f.priority_score),
+            value_or_na(f.algorithm),
+            value_or_na(f.operation),
+            value_or_na(f.role),
+            value_or_na(f.file_path),
+            value_or_na(f.start_line),
+        ]
+        for f in findings
+    ]
+    return render_table(headers, rows, max_widths=[13, 6, 12, 16, 20, 44, 6])
+
+
+def _priority_counts(findings: Sequence[CliFinding]) -> str:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        key = (finding.priority_level or "UNKNOWN").upper()
+        counts[key] = counts.get(key, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: _PRIORITY_ORDER.get(kv[0], 99))
+    return "  ".join(f"{name.lower()}={count}" for name, count in ordered) or "none"
+
+
+def render_local_summary(
+    meta: LocalScanMeta,
+    findings: Sequence[CliFinding],
+    *,
+    files_analyzed: int,
+    total_files: int,
+) -> str:
+    """The human report for ``cryptiq scan`` in local mode."""
+    lines = [
+        "CRYPTIQ SCAN",
+        f"Target:      {meta.target}",
+        f"Repository:  {meta.repository_label}",
+        f"Mode:        {meta.mode} (offline, local engine)",
+        f"Commit:      {value_or_na(meta.commit_sha)}",
+    ]
+    if meta.dirty:
+        lines.append("Note:        working tree has uncommitted changes")
+    lines += [
+        f"Files:       {files_analyzed} analyzed / {total_files} discovered",
+        f"Findings:    {len(findings)}  ({_priority_counts(findings)})",
+        "",
+        render_cli_findings_table(findings),
+    ]
+    return "\n".join(lines)
+
+
+def _diff_row(finding: CliFinding) -> str:
+    return (
+        f"  {value_or_na(finding.priority_level):<8} "
+        f"{value_or_na(finding.algorithm):<10} "
+        f"{value_or_na(finding.file_path)}:{value_or_na(finding.start_line)}"
+    )
+
+
+def render_diff(diff: DiffResult) -> str:
+    """Render NEW / FIXED / UNCHANGED buckets, deterministic order."""
+    lines = [
+        "CRYPTIQ DIFF",
+        f"Repository: {diff.repository_label}",
+        f"Base:       {value_or_na(diff.base_sha)}",
+        f"Head:       {value_or_na(diff.head_sha)}",
+        "",
+        f"NEW ({len(diff.new)})",
+    ]
+    lines += [_diff_row(f) for f in diff.new] or ["  (none)"]
+    lines += ["", f"FIXED ({len(diff.fixed)})"]
+    lines += [_diff_row(f) for f in diff.fixed] or ["  (none)"]
+    lines += ["", f"UNCHANGED ({len(diff.unchanged)})"]
+    lines += [_diff_row(f) for f in diff.unchanged] or ["  (none)"]
+    return "\n".join(lines)

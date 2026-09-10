@@ -53,7 +53,7 @@ jobs:
       - name: Ruff
         run: python -m ruff check .
       - name: Pytest
-        # Baseline: 761 passed, 34 skipped.
+        # Baseline: 825 passed, 34 skipped.
         run: python -m pytest -q
 
   frontend-quality:

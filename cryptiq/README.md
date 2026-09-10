@@ -31,25 +31,38 @@ curl http://localhost:8000/api/v1/health
 
 ## CLI
 
-`cryptiq` is a thin client of the running HTTP API — it never imports the
-engine or the database. Install it with `pip install -e ".[dev]"` (console
-script `cryptiq`), or run `python -m app.cli`.
+`cryptiq` is the standalone CLI to the analysis engine. It runs in two modes
+over the **same** engine — see [`CLI.md`](CLI.md) for the full reference.
+
+**Local** (offline; runs the engine in-process, no API/DB/Docker needed):
 
 ```bash
-cryptiq scan https://github.com/pyca/cryptography 1f903f5ed2e5e316f345a927555e48535829d8de
+cryptiq scan .                                   # working tree
+cryptiq scan /path/to/repo --commit <sha>        # exact commit via `git archive`
+cryptiq scan . --format sarif                    # valid SARIF 2.1.0
+cryptiq diff --base <sha> --head <sha>           # fingerprint diff: NEW/FIXED/UNCHANGED
+cryptiq version
+```
+
+**Remote** (thin HTTP client of a running Cryptiq API):
+
+```bash
+cryptiq scan https://github.com/org/repo --remote --commit <sha>
+cryptiq scan https://github.com/org/repo --remote --commit <sha> --wait --format sarif
 cryptiq scan-status <scan_id>
-cryptiq findings <scan_id> --algorithm rsa --priority high --page 1
-cryptiq finding <finding_id>
-cryptiq review-queue --status open
+cryptiq findings <scan_id> --algorithm rsa --priority high
+cryptiq finding <finding_id> --grouped
+cryptiq review-queue --status open --json
 cryptiq review-update <review_id> --status in_review --assignee alice
 cryptiq demo        # submit + poll + summarise the acceptance scan
 ```
 
-Global `--api-url` (or `$CRYPTIQ_API_URL`, default
-`http://localhost:8000/api/v1`). Every command takes `--json`, which emits the
-API schema unchanged. Exit codes: `0` ok, `1` failure, `2` bad arguments,
-`3` scan failed, `4` not found. See `../DEMO_RUNBOOK.md` for the full demo
-flow and `../CLI_AUDIT.md` for design notes.
+Install with `pip install -e ".[dev]"` (console script `cryptiq`) or run
+`python -m app.cli`. Remote API URL: `--api-url`, then `$CRYPTIQ_API_URL`, then
+`http://localhost:8000/api/v1`. Every command takes `--json`. Exit codes:
+`0` ok / no blocking findings, `1` findings need attention (or generic remote
+failure), `2` bad arguments, `3` operational error, `4` remote resource not
+found. See [`CLI.md`](CLI.md), `../DEMO_RUNBOOK.md` and `../CLI_AUDIT.md`.
 
 ## Frontend
 
@@ -77,8 +90,27 @@ Repository -> exact commit -> source snapshot -> file discovery
 The snapshot exists only inside `async with ingest_commit(...)`, so every
 stage that reads source runs within that block.
 
-Rules implemented: RSA, ECDSA, Ed25519, ECDH, X25519, AES and hashes, all
-against the Python `cryptography` library.
+## Supported analysis scope
+
+Cryptiq provides deterministic cryptographic migration analysis for **supported
+APIs in the Python `cryptography` library**. The analysis engine — AST parsing,
+role inference, PQC review-path mapping, impact and priority — is
+library-agnostic; coverage is defined entirely by the rule set, which is
+extensible to further cryptographic libraries by adding rules under
+`app/engine/rules/`.
+
+| | |
+|---|---|
+| **Language** | Python (`ast`-based; no target code is executed) |
+| **Library** | `cryptography` (pyca) |
+| **Rules** | RSA, ECDSA, Ed25519, ECDH, X25519, AES, hashes |
+| **Not yet covered** | PyCryptodome (`Crypto.*`), PyNaCl (`nacl.*`), stdlib `hashlib`, DSA, DH, TLS/protocol recognition — tracked as future rule-set scope, not a defect |
+
+A repository outside this scope (or one with no cryptography at all) scans
+cleanly and returns zero findings rather than guesses — the engine is precise
+about what it can establish from syntax and silent about the rest. Coverage of
+additional libraries is additive: a new rule does not change any existing
+finding or its fingerprint.
 
 A finding separates what was observed from what was inferred: the algorithm,
 API, location and source excerpt can be checked against the file, while the

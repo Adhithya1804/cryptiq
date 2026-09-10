@@ -109,3 +109,69 @@ def test_migration_candidates_are_pre_queued_for_review(
         select(func.count()).select_from(ReviewItem)
     )
     assert open_reviews == len(candidates)
+
+
+# A signature call inside a class method: the engine match carries an enclosing
+# function, an enclosing class and an evidence basis. Regression guard for the
+# local/API divergence where the hosted API returned null for all three because
+# they were never persisted.
+_SCOPED_TREE: dict[str, bytes] = {
+    "signing.py": (
+        b"from cryptography.hazmat.primitives.asymmetric import rsa\n"
+        b"\n"
+        b"class Signer:\n"
+        b"    def sign(self, key: rsa.RSAPrivateKey, payload):\n"
+        b"        return key.sign(payload)\n"
+    ),
+}
+
+
+@pytest.fixture
+def scoped_analysis(tmp_path: Path):
+    root = write_tree(tmp_path / "scoped", _SCOPED_TREE)
+    snapshot = SourceSnapshot(
+        root_path=root,
+        repository=RepositoryReference(
+            provider="github",
+            owner="pyca",
+            name="cryptography",
+            canonical_url="https://github.com/pyca/cryptography",
+        ),
+        commit_sha="1" * 40,
+        content_hash="0" * 64,
+        file_count=1,
+    )
+    return analyze_snapshot(build_result(snapshot, _LIMITS), root)
+
+
+def test_enclosing_scope_and_evidence_basis_are_persisted_and_served(
+    session: Session, scoped_analysis
+) -> None:
+    from app.db.models.repository import Repository as _Repo
+    from app.services.serialize import finding_dto
+
+    match = next(
+        f.match for f in scoped_analysis.findings if f.match.api == "RSAPrivateKey.sign"
+    )
+    assert match.enclosing_function == "Signer.sign"
+    assert match.enclosing_class == "Signer"
+    assert match.evidence_basis is not None
+
+    scan = _scan(session)
+    persist_analysis(session, scan, scoped_analysis)
+    session.commit()
+
+    row = session.scalars(
+        select(Finding).where(
+            Finding.scan_id == scan.id, Finding.api == "RSAPrivateKey.sign"
+        )
+    ).one()
+    assert row.evidence.enclosing_function == "Signer.sign"
+    assert row.evidence.enclosing_class == "Signer"
+    assert row.evidence_basis == match.evidence_basis.value
+
+    repository = session.get(_Repo, scan.repository_id)
+    dto = finding_dto(row, scan, repository)
+    assert dto.observed.enclosing_function == "Signer.sign"
+    assert dto.observed.enclosing_class == "Signer"
+    assert dto.inference.evidence_basis == match.evidence_basis.value

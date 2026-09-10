@@ -42,6 +42,11 @@ class Evidence(UUIDPrimaryKeyMixin, Base):
     rule_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parser_version: Mapped[str] = mapped_column(String(64), nullable=False)
     ruleset_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The AST scope the match sat in, carried through from the RuleMatch so the
+    # hosted API's "observed" block matches what the in-process CLI reports.
+    # Nullable: a match at module scope has neither.
+    enclosing_function: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enclosing_class: Mapped[str | None] = mapped_column(String(255), nullable=True)
     retrieved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
