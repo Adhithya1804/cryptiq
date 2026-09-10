@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+dist
+dist-ssr
+coverage
+*.local
+.env
+.env.*
+*.tsbuildinfo
+.DS_Store
+README.md

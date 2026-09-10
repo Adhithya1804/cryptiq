@@ -1,0 +1,69 @@
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  background: var(--surface-2);
+}
+
+.kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 14px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.smallLabel {
+  font-size: 10.5px;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.currentChip {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text-1);
+}
+
+.arrow {
+  color: var(--text-3);
+  font-size: 14px;
+}
+
+.pathCol {
+  flex: 1;
+  min-width: 0;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pathChip {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--border-strong));
+  border-radius: 5px;
+  color: var(--blue);
+}
+
+.summary {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin: 14px 0 0;
+  line-height: 1.55;
+}

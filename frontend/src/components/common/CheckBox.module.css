@@ -1,0 +1,36 @@
+.wrap {
+  display: inline-flex;
+}
+
+.input {
+  position: absolute;
+  opacity: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.box {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--border-strong);
+  background: transparent;
+  cursor: pointer;
+  display: inline-block;
+  transition: background var(--transition-fast);
+}
+
+.box[data-checked='true'] {
+  background: var(--text-1);
+}
+
+.input:focus-visible + .box {
+  box-shadow: var(--focus-ring);
+}
+
+.input:disabled + .box {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

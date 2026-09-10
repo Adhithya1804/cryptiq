@@ -1,0 +1,51 @@
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.priority {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.priorityLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.reviewBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+.reviewBadge .badgeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.confidenceDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-2);
+  flex: none;
+}
+.confidenceLabel {
+  font-size: 12.5px;
+  color: var(--text-2);
+}

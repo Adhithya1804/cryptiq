@@ -1,0 +1,42 @@
+# Shared Trivy configuration for Cryptiq CI image scans.
+# Referenced by .github/workflows/ci.yml as `trivy image --config trivy.yaml`.
+# See SECURITY_SCANNING.md for the policy this encodes.
+# Verified against Trivy 0.74.0.
+
+# Scan for OS/library vulnerabilities, embedded secrets, and image
+# misconfiguration in one pass.
+scan:
+  scanners:
+    - vuln
+    - secret
+    - misconfig
+
+pkg:
+  # OS packages + language libraries. (Was `vulnerability.type`, renamed in
+  # Trivy 0.60+.)
+  types:
+    - os
+    - library
+
+vulnerability:
+  # Deliberately NOT true: unfixed vulnerabilities (typically inherited from the
+  # upstream base image) MUST remain visible in the report.
+  ignore-unfixed: false
+
+# The authoritative scan captures every severity; individual workflow steps
+# filter with `trivy convert --severity ...` for the gate vs. the report.
+severity:
+  - UNKNOWN
+  - LOW
+  - MEDIUM
+  - HIGH
+  - CRITICAL
+
+# The ONLY place a finding may be suppressed. Every entry is a reviewed,
+# time-boxed exception with a written rationale; expired entries fail CI again.
+# Resolved relative to the working directory of the `trivy` invocation, which in
+# CI is the repository root (where this file also lives).
+ignorefile: .trivyignore.yaml
+
+# Do not let a transient DB/network hiccup pass as "no vulnerabilities".
+exit-code: 0

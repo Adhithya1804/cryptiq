@@ -1,0 +1,27 @@
+# Keep the build context small and free of anything host- or secret-specific.
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+*.egg-info
+build
+dist
+
+# Never ship secrets or local state into an image layer.
+.env
+.env.*
+*.db
+*.sqlite3
+*.sqlite
+
+# Local-only docs / scratch
+MERGE_AUDIT.md
+FRONTEND_BACKEND_CONTRACT.md
+.DS_Store
+
+# Tests are not needed in the production image (run them via requirements-dev).
+tests

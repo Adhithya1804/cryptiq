@@ -1,0 +1,51 @@
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+.panel.padded {
+  padding: 22px 26px;
+}
+.panel.inset {
+  background: var(--surface-2);
+}
+
+.sectionLabel {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: 0;
+  margin: 0;
+}
+
+.defRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.defRow dt {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0;
+}
+.defRow dd {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-1);
+  text-align: right;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.defList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}

@@ -1,0 +1,17 @@
+# Cryptiq backend — development / CI-only dependencies.
+#
+# Not installed in the production image. Use to run the test suite / linter in a
+# throwaway container against the project source, e.g.:
+#
+#   docker run --rm -v "$PWD:/src" -w /src python:3.12-slim-bookworm \
+#     sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q && ruff check ."
+#
+# The verified regression path is the host venv (see DOCKER.md §9).
+
+-r requirements.txt
+
+pytest==8.4.2
+pytest-asyncio==0.26.0
+iniconfig==2.3.0
+pluggy==1.6.0
+ruff==0.16.6

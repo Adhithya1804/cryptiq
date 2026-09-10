@@ -1,0 +1,78 @@
+# Cryptiq — local demo / hackathon stack.
+#
+#   browser ──► frontend (nginx :8080, static SPA)
+#   browser ──► backend  (FastAPI + in-process worker :8000, CORS-allowed)  ──► SQLite volume
+#   (nginx also proxies :8080/api/ ──► backend:8000 as a curl convenience)
+#
+# Default database is SQLite on a named volume: nothing else to run, and the
+# cached acceptance scan is picked up automatically if you drop a cryptiq.db
+# into ./deploy/seed/ (see DOCKER.md). For the PostgreSQL path (closer to the
+# intended AWS deployment) add the override file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
+#
+# Configuration comes from ./.env (copy from ./.env.example) — used both for
+# compose variable interpolation and as the backend container's env_file.
+# No secret is baked into any image.
+
+name: cryptiq
+
+services:
+  backend:
+    build:
+      context: ./cryptiq
+      dockerfile: Dockerfile
+    image: cryptiq-backend:local
+    restart: unless-stopped
+    # The image's ENTRYPOINT already runs tini as PID 1 for signal forwarding
+    # and zombie reaping, so compose's own init is not layered on top.
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:////data/cryptiq.db
+      RUN_WORKER: "true"
+      # The browser reaches the API through the frontend proxy at /api, so the
+      # only origin that needs to be allow-listed for direct calls is the
+      # frontend itself.
+      CORS_ALLOW_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+    volumes:
+      - cryptiq-data:/data
+      - ./deploy/seed:/seed:ro
+    # Published on the loopback only, for direct API / CLI access. The frontend
+    # reaches the backend over the internal network, not this port. Change the
+    # host side (left of the colon) if 8000 is taken locally.
+    ports:
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the static bundle at build time. The browser calls the
+        # backend directly on its published host port; CORS_ALLOW_ORIGINS on the
+        # backend allows the frontend origin. (nginx also proxies /api/ as a
+        # same-origin convenience for curl, but the app uses this absolute URL.)
+        VITE_API_BASE_URL: http://localhost:${BACKEND_HOST_PORT:-8000}/api/v1
+    image: cryptiq-frontend:local
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  cryptiq-data:

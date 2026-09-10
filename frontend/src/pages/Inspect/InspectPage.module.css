@@ -1,0 +1,67 @@
+.intro {
+  font-size: 13.5px;
+  color: var(--text-2);
+  margin: 8px 0 32px;
+  line-height: 1.6;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 24px;
+}
+.form .shaField {
+  margin-bottom: -2px;
+}
+
+.submitRow {
+  margin-top: 4px;
+}
+
+.errorBox {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--border-strong));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.errorMessage {
+  font-size: 12.5px;
+  color: var(--red);
+}
+.dismiss {
+  font-size: 12.5px;
+  color: var(--text-1);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+  padding: 0 0 1px;
+}
+.dismiss:hover {
+  color: var(--text-1);
+  border-bottom-color: var(--text-1);
+}
+
+.assurances {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 36px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.assurances li {
+  font-size: 12.5px;
+  color: var(--text-3);
+  list-style: none;
+}
+.assurances {
+  padding-left: 0;
+}

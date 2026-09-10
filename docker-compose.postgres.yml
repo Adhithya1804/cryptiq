@@ -1,0 +1,41 @@
+# PostgreSQL override — the deployment-representative database path.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
+#
+# Adds a Postgres service, points the backend at it, and drops the SQLite
+# volume/seed mount. Alembic still owns the schema (the entrypoint runs
+# `alembic upgrade head` against whatever DATABASE_URL points to). A fresh
+# Postgres starts empty, so the cached acceptance scan must be produced once by
+# running a scan (see DOCKER.md).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cryptiq
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cryptiq}
+      POSTGRES_DB: cryptiq
+    volumes:
+      - cryptiq-pgdata:/var/lib/postgresql/data
+    # Not published — reachable only on the internal compose network.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryptiq -d cryptiq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    environment:
+      DATABASE_URL: postgresql+psycopg://cryptiq:${POSTGRES_PASSWORD:-cryptiq}@db:5432/cryptiq
+    # The SQLite data volume / seed mount from the base file stay attached but
+    # unused — the entrypoint's sqlite branch is skipped for a postgres URL.
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  cryptiq-pgdata:

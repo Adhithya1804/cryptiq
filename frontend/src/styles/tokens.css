@@ -1,0 +1,75 @@
+/**
+ * Design tokens — extracted verbatim from the Cryptiq Claude Design source
+ * (Cryptiq.dc.html). These are the single source of truth for colour, type,
+ * spacing and motion. Do not introduce ad-hoc values elsewhere in the codebase.
+ *
+ * The product is a single committed dark theme (Settings › Appearance › Theme is
+ * "Dark", read-only), so there is no light palette to mirror.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --ink: #0a0a0b;
+  --surface-0: #0a0a0b;
+  --surface-1: #111113;
+  --surface-2: #17181b;
+  --surface-3: #202125;
+
+  /* Borders */
+  --border: #26272b;
+  --border-strong: #34363b;
+
+  /* Text */
+  --text-1: #f2f2f3;
+  --text-2: #9b9da3;
+  --text-3: #63656b;
+
+  /* Accents — "blue" reads as near-white in this palette by design */
+  --blue: #d8d9dc;
+  --blue-solid: #e9e9eb;
+  --amber: #d6a15a;
+  --amber-solid: #b4790a;
+  --red: #e8635c;
+  --red-solid: #c6362e;
+  --green: #4bb583;
+  --green-solid: #15804f;
+
+  /* Typography */
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-size-base: 14px;
+  --line-height-base: 1.45;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Layout */
+  --sidebar-width-expanded: 232px;
+  --sidebar-width-collapsed: 60px;
+  --topbar-height: 44px;
+  --content-max-width: 1180px;
+
+  /* Motion */
+  --transition-fast: 0.12s ease;
+  --transition-base: 0.15s ease;
+  --transition-sidebar: width 0.15s ease;
+
+  /* Elevation */
+  --shadow-toast: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-sidebar: 4px 0 24px rgba(0, 0, 0, 0.5);
+
+  /* Focus ring — accessible, consistent across interactive elements */
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-fast: 0s;
+    --transition-base: 0s;
+    --transition-sidebar: none;
+  }
+}

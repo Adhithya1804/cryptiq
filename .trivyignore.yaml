@@ -1,0 +1,77 @@
+# Cryptiq CI — vulnerability exception register (Trivy structured ignore file).
+# Schema verified against Trivy 0.74.0.
+#
+# This file is the ONLY sanctioned way to stop a Trivy finding from failing CI,
+# and it exists for exactly one case: a CRITICAL vulnerability that is genuinely
+# unfixable right now because it originates in an upstream base image
+# (python:3.12-slim-bookworm for the backend, nginxinc/nginx-unprivileged for
+# the frontend) and has no released fix.
+#
+# An entry is permitted only when ALL of the following hold, and the
+# justification is written into `statement`:
+#
+#   1. The vulnerable package comes from the base image, not from Cryptiq code
+#      or Cryptiq's pinned dependencies.
+#   2. No fixed version exists upstream (Debian/Alpine status "affected" /
+#      "will_not_fix" / "fix_deferred", or no released package with the fix).
+#      A vulnerability whose Status is "fixed" MUST be resolved by bumping the
+#      base image, never listed here.
+#   3. It is not reachable/exploitable in Cryptiq's usage (Cryptiq is a
+#      deterministic static analyser: no TLS termination, no perl, no archive
+#      libraries beyond Python's, DB is not attacker-controlled).
+#
+# Every entry MUST set `expired_at` (<= 90 days out). On expiry Trivy
+# re-reports the CVE and CI fails until it is re-reviewed, re-dated, or fixed by
+# a base-image bump. The reports keep every excepted CVE visible via
+# `trivy convert --show-suppressed` (see the "all severities" workflow step).
+#
+# HIGH findings are reported, not gated, so they never belong here.
+# CRITICALs in Cryptiq's own code or dependencies must be fixed, never listed.
+#
+# ---------------------------------------------------------------------------
+# Reviewed 2026-09-10. Source: `trivy image python:3.12-slim-bookworm`
+# (the backend runtime base). All five are OS packages with no released fix.
+# Re-review by 2026-12-09.
+# ---------------------------------------------------------------------------
+
+vulnerabilities:
+  - id: CVE-2023-45853
+    statement: >-
+      zlib1g, inherited from python:3.12-slim-bookworm. Debian status
+      "will_not_fix": the integer overflow is in zlib's contrib/minizip
+      (zipOpenNewFileInZip4_6), which Debian does not build into libz. Not
+      reachable — Cryptiq never links MiniZip; it uses Python's zipfile for
+      bounded archive extraction. Reviewed 2026-09-10.
+    expired_at: 2026-12-09
+  - id: CVE-2025-7458
+    statement: >-
+      libsqlite3-0, inherited from python:3.12-slim-bookworm. Debian status
+      "affected", no fixed package. Integer overflow reachable only via crafted
+      SQL with extreme values; Cryptiq's SQLite database holds only its own
+      analysis output and is never exposed to untrusted SQL. Reviewed
+      2026-09-10.
+    expired_at: 2026-12-09
+  - id: CVE-2026-13221
+    statement: >-
+      perl-base, inherited from python:3.12-slim-bookworm. Debian status
+      "affected", no fixed package. Perl regex engine flaw; Cryptiq never
+      invokes perl at build or run time (perl-base is pulled transitively by
+      base-image tooling). Not reachable. Reviewed 2026-09-10.
+    expired_at: 2026-12-09
+  - id: CVE-2026-8376
+    statement: >-
+      perl-base, inherited from python:3.12-slim-bookworm. Debian status
+      "affected", no fixed package. Heap buffer overflow compiling regexes in
+      perl; perl is never invoked by Cryptiq. Not reachable. Reviewed
+      2026-09-10.
+    expired_at: 2026-12-09
+  - id: CVE-2026-42496
+    statement: >-
+      perl-base (perl-archive-tar), inherited from python:3.12-slim-bookworm.
+      Debian status "fix_deferred", no fixed package. Path traversal in
+      Archive::Tar; Cryptiq never runs perl or Archive::Tar. Not reachable.
+      Reviewed 2026-09-10.
+    expired_at: 2026-12-09
+
+secrets: []
+misconfigurations: []

@@ -1,0 +1,20 @@
+.spinner {
+  display: inline-block;
+  flex: none;
+  border-style: solid;
+  border-color: var(--border-strong);
+  border-top-color: var(--text-1);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.onAccent {
+  border-color: rgba(10, 10, 11, 0.35);
+  border-top-color: #0a0a0b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 1.2s;
+  }
+}

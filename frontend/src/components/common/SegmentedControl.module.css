@@ -1,0 +1,53 @@
+.group {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.legend {
+  font-size: 13px;
+  color: var(--text-1);
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.option {
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  background: transparent;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+  user-select: none;
+}
+
+.option[data-selected='true'] {
+  background: color-mix(in srgb, var(--text-1) 12%, transparent);
+  color: var(--text-1);
+  border-color: var(--border-strong);
+}
+
+.option:hover:not([data-selected='true']) {
+  color: var(--text-1);
+}
+
+.group:disabled .option {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.option:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
+}

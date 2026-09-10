@@ -1,0 +1,35 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.title {
+  font-size: 26px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
+  color: var(--text-1);
+}
+
+.description {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.55;
+  max-width: 62ch;
+}
+
+.aside {
+  flex: none;
+}

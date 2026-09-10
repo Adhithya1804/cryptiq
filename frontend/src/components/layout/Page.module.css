@@ -1,0 +1,36 @@
+.page {
+  padding: 36px 48px 56px;
+  animation: fadeIn 0.15s ease;
+}
+.page.narrow {
+  max-width: 600px;
+  padding: 56px 48px;
+}
+.page.flush {
+  padding-bottom: 48px;
+}
+
+.headerBlock {
+  padding-bottom: 0;
+  margin-bottom: 24px;
+}
+.headerBlock.divided {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 767px) {
+  .page {
+    padding: 24px 16px 40px;
+  }
+  .page.narrow {
+    padding: 32px 16px;
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page {
+    animation: none;
+  }
+}

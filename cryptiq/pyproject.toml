@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cryptiq"
+version = "0.1.0"
+description = "Deterministic cryptographic static-analysis backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+    "pydantic>=2.8,<3.0",
+    "pydantic-settings>=2.4,<3.0",
+    "SQLAlchemy>=2.0.30,<3.0",
+    "alembic>=1.13,<2.0",
+    "httpx>=0.27,<1.0",
+    "google-genai>=1.0,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9.0",
+    "pytest-asyncio>=0.23,<1.0",
+    "ruff>=0.5,<1.0",
+]
+
+[project.scripts]
+cryptiq-api = "app.main:run"
+cryptiq = "app.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+markers = [
+    "network: hits the real GitHub API; opt in with CRYPTIQ_RUN_NETWORK_TESTS=1",
+    "gemini_live: hits the real Gemini API; runs only when GEMINI_API_KEY is set",
+]
+filterwarnings = [
+    "ignore:'asyncio.[gs]et_event_loop_policy' is deprecated:DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# Rule fixtures are sample repository code, not project source: they use
+# undefined names and unused imports on purpose.
+extend-exclude = ["tests/golden"]

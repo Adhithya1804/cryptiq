@@ -1,0 +1,344 @@
+name: CI
+
+# Pipeline (see SECURITY_SCANNING.md for the image-scan contract):
+#
+#   quality (backend + frontend)  ->  docker-build  ->  trivy-scan
+#                                                   \-> cryptiq-self-scan
+#
+# Trivy scans the EXACT images produced by docker-build (exported as a tarball
+# artifact and scanned with `trivy image --input` -- images are never pushed to
+# a registry just to be scanned). CRITICAL vulnerabilities and leaked secrets
+# fail CI; HIGH is reported. Base-image (unfixed) vulnerabilities stay visible.
+#
+# Repository layout this workflow expects: a single tree with `cryptiq/`
+# (FastAPI backend + CLI) and `frontend/` (React/Vite) side by side, plus the
+# Docker/compose files and this `.github/` directory at the root. See
+# SECURITY_SCANNING.md - "Repository layout" for why.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+# Least privilege by default; jobs that publish SARIF opt in explicitly.
+permissions:
+  contents: read
+
+concurrency:
+  # One in-flight run per PR (or per branch on direct push); supersede the rest.
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned, deliberately. Verified locally with 0.74.0. Bump on review.
+  TRIVY_VERSION: "0.74.0"
+  # Baked into the frontend bundle at build time; must be an absolute URL.
+  VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+
+jobs:
+  # --------------------------------------------------------------- quality ---
+  backend-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cryptiq
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cryptiq/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Pytest
+        # Baseline: 761 passed, 34 skipped.
+        run: python -m pytest -q
+
+  frontend-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: TypeScript
+        run: npm run typecheck
+      - name: ESLint
+        run: npm run lint
+      - name: Vitest
+        # Baseline: 57 passed. `npm test` is `vitest run` (non-watch).
+        run: npm test
+      - name: Vite build
+        run: npm run build
+
+  # ----------------------------------------------------------- docker build ---
+  docker-build:
+    needs: [backend-quality, frontend-quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./cryptiq
+          file: ./cryptiq/Dockerfile
+          tags: cryptiq-backend:ci-${{ github.sha }}
+          provenance: false
+          # Export the exact image as a docker-archive tar (no registry).
+          outputs: type=docker,dest=/tmp/cryptiq-backend.tar
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          tags: cryptiq-frontend:ci-${{ github.sha }}
+          build-args: |
+            VITE_API_BASE_URL=${{ env.VITE_API_BASE_URL }}
+          provenance: false
+          outputs: type=docker,dest=/tmp/cryptiq-frontend.tar
+
+      - name: Upload backend image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-backend
+          path: /tmp/cryptiq-backend.tar
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload frontend image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-frontend
+          path: /tmp/cryptiq-frontend.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # ------------------------------------------------------------- trivy scan ---
+  trivy-scan:
+    needs: [docker-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # upload-sarif -> GitHub code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: cryptiq
+            tar: cryptiq-backend.tar
+          - image: frontend
+            context: frontend
+            tar: cryptiq-frontend.tar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download ${{ matrix.image }} image
+        uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.image }}
+          path: /tmp
+
+      - name: Install Trivy ${{ env.TRIVY_VERSION }}
+        uses: aquasecurity/setup-trivy@v0.2.6
+        with:
+          version: v${{ env.TRIVY_VERSION }}
+          cache: true
+
+      - name: Cache Trivy vulnerability DB
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/trivy-cache
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      # One authoritative scan of the exact built image. No severity filter and
+      # no --ignore-unfixed, so the JSON report holds EVERYTHING. --show-suppressed
+      # keeps the reviewed .trivyignore.yaml exceptions IN the report (as
+      # ignored) so base-image CVEs stay visible. Exceptions are applied here;
+      # expired ones reappear automatically and re-break the gate.
+      - name: Scan image (full inventory)
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: |
+          trivy image \
+            --input "/tmp/${{ matrix.tar }}" \
+            --config trivy.yaml \
+            --scanners vuln,secret,misconfig \
+            --show-suppressed \
+            --format json \
+            --output "trivy-${{ matrix.image }}.json" \
+            --exit-code 0
+
+      - name: Report — HIGH + CRITICAL (does not fail CI)
+        run: |
+          trivy convert --format table --severity HIGH,CRITICAL \
+            "trivy-${{ matrix.image }}.json" | tee "trivy-${{ matrix.image }}-high.txt"
+          {
+            echo "### Trivy — ${{ matrix.image }} image · HIGH + CRITICAL"
+            echo '```'
+            cat "trivy-${{ matrix.image }}-high.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report — all severities incl. suppressed base-image CVEs (visibility only)
+        run: |
+          trivy convert --format table --show-suppressed \
+            "trivy-${{ matrix.image }}.json" > "trivy-${{ matrix.image }}-all.txt" || true
+
+      - name: Build context — secret & misconfig scan (visibility only)
+        run: |
+          trivy fs --scanners secret,misconfig "./${{ matrix.context }}" \
+            --format table --exit-code 0 | tee "trivy-${{ matrix.image }}-context.txt"
+
+      - name: Convert to SARIF (HIGH + CRITICAL)
+        run: |
+          trivy convert --format sarif --severity HIGH,CRITICAL \
+            --output "trivy-${{ matrix.image }}.sarif" \
+            "trivy-${{ matrix.image }}.json"
+
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}   # distinct per image; no collision
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.image }}
+          path: |
+            trivy-${{ matrix.image }}.json
+            trivy-${{ matrix.image }}.sarif
+            trivy-${{ matrix.image }}-high.txt
+            trivy-${{ matrix.image }}-all.txt
+            trivy-${{ matrix.image }}-context.txt
+          retention-days: 7
+
+      # Gate. Fails on any non-suppressed CRITICAL vulnerability OR any leaked
+      # secret (Trivy reports hardcoded secrets at CRITICAL). The only
+      # exceptions are the reviewed, time-boxed entries in .trivyignore.yaml,
+      # already applied at scan time -- this step does not pass --show-suppressed
+      # so it never counts them.
+      - name: Fail on CRITICAL / leaked secrets
+        run: |
+          trivy convert --exit-code 1 --severity CRITICAL \
+            "trivy-${{ matrix.image }}.json"
+
+  # -------------------------------------------------------- cryptiq self-scan ---
+  # Deterministic analysis of this repository by Cryptiq itself:
+  #   repo -> CLI (submit + poll) -> findings (all pages) -> SARIF -> code scanning
+  # REQUIRED: the deterministic analysis and the SARIF upload.
+  # NOT REQUIRED: the Gemini explanation layer. GEMINI_API_KEY is left unset; the
+  # backend answers 503 AI_EXPLANATION_UNAVAILABLE and the scan is unaffected.
+  #
+  # The analysed repository is NEVER executed: Cryptiq downloads a source
+  # archive for the exact commit and runs Python AST analysis only. This job
+  # installs Cryptiq's own dependencies and nothing from the target tree.
+  cryptiq-self-scan:
+    needs: [backend-quality]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    defaults:
+      run:
+        working-directory: cryptiq
+    env:
+      DATABASE_URL: "sqlite:///./ci-selfscan.db"
+      RUN_WORKER: "true"
+      # Lets Cryptiq fetch the commit archive without hitting anonymous GitHub
+      # rate limits. Read-only, scoped to this repo, never echoed.
+      GITHUB_TOKEN: ${{ github.token }}
+      CRYPTIQ_API_URL: "http://127.0.0.1:8000/api/v1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cryptiq/requirements.txt
+      - name: Install Cryptiq's own dependencies (only)
+        run: pip install -r requirements.txt
+
+      - name: Start backend + in-process worker
+        run: |
+          alembic upgrade head
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+            > uvicorn.log 2>&1 &
+          echo $! > uvicorn.pid
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/health/ready >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/health/ready
+
+      - name: Submit self-scan (CLI)
+        # Exit non-zero here == "Cryptiq itself failed" -> CI fails.
+        run: |
+          python -m app.cli scan \
+            "${{ github.server_url }}/${{ github.repository }}" \
+            "${{ github.sha }}" --json | tee scan.json
+          scan_id=$(python -c 'import json; print(json.load(open("scan.json"))["id"])')
+          echo "SCAN_ID=$scan_id" >> "$GITHUB_ENV"
+
+      - name: Wait for COMPLETED (bounded poll, max ~10 min)
+        run: |
+          for i in $(seq 1 120); do
+            python -m app.cli scan-status "$SCAN_ID" --json > status.json || true
+            s=$(python -c 'import json; print(json.load(open("status.json")).get("status",""))' 2>/dev/null || echo "")
+            echo "attempt $i: status=${s:-<none>}"
+            case "$s" in
+              COMPLETED) exit 0 ;;
+              FAILED)    echo "::error::Cryptiq self-scan FAILED"; cat status.json; echo "--- uvicorn.log ---"; cat uvicorn.log; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::Cryptiq self-scan did not reach COMPLETED in time"
+          cat uvicorn.log
+          exit 1
+
+      - name: Findings -> SARIF 2.1.0 (all pages)
+        run: |
+          python ../.github/scripts/findings_to_sarif.py \
+            --api-url "$CRYPTIQ_API_URL" \
+            --scan-id "$SCAN_ID" \
+            --repo-root .. \
+            --output cryptiq.sarif
+          python -c "import json; d=json.load(open('cryptiq.sarif')); assert d['version']=='2.1.0'; print('results:', len(d['runs'][0]['results']))"
+
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cryptiq/cryptiq.sarif
+          category: cryptiq-self-scan   # distinct from trivy-* categories
+
+      - name: Stop backend
+        if: always()
+        run: |
+          [ -f uvicorn.pid ] && kill "$(cat uvicorn.pid)" 2>/dev/null || true
+
+      - name: Upload self-scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cryptiq-self-scan
+          path: |
+            cryptiq/scan.json
+            cryptiq/status.json
+            cryptiq/cryptiq.sarif
+            cryptiq/uvicorn.log
+          retention-days: 7

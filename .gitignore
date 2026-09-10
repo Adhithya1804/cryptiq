@@ -1,0 +1,6 @@
+# Docker stack local configuration and seed data — never commit.
+.env
+deploy/seed/*.db
+deploy/seed/*.sqlite3
+
+.DS_Store

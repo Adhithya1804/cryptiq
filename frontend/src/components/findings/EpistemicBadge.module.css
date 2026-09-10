@@ -1,0 +1,36 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  margin-bottom: 14px;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.observed {
+  color: var(--text-2);
+}
+.observed .dot {
+  background: var(--text-2);
+}
+
+.inferred {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border-strong));
+}
+.inferred .dot {
+  border: 1.5px dashed var(--blue);
+  background: transparent;
+}

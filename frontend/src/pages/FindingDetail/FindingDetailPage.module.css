@@ -1,0 +1,63 @@
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+.left {
+  padding: 32px 40px;
+  min-width: 0;
+}
+
+.right {
+  padding: 32px 28px;
+  background: var(--surface-1);
+  border-left: 1px solid var(--border);
+}
+
+.sectionLabel {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 14px;
+}
+.sectionLabel.spaced {
+  margin-top: 32px;
+}
+
+.block {
+  margin-bottom: 26px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: 0;
+  margin: 0 0 24px;
+}
+
+.roleValue {
+  color: var(--blue);
+}
+
+.reviewPathWrap {
+  margin-bottom: 20px;
+}
+
+@media (max-width: 1060px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .right {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 767px) {
+  .left,
+  .right {
+    padding: 24px 16px;
+  }
+}

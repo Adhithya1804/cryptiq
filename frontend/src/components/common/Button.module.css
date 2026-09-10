@@ -1,0 +1,92 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base),
+    opacity var(--transition-base);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Sizes */
+.md {
+  padding: 11px 20px;
+  font-size: 14px;
+}
+.sm {
+  padding: 9px 16px;
+  font-size: 13px;
+}
+.xs {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* Variants */
+.primary {
+  background: var(--blue-solid);
+  color: #0a0a0b;
+}
+.primary:not(:disabled):hover {
+  background: #fff;
+}
+
+.positive {
+  background: var(--green-solid);
+  color: #fff;
+}
+.positive:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+.secondary {
+  background: transparent;
+  color: var(--text-1);
+  border-color: var(--border-strong);
+}
+.secondary:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.subtle {
+  background: transparent;
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.subtle:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.accent {
+  background: transparent;
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border-strong));
+}
+.accent:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.danger {
+  background: transparent;
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border-strong));
+}
+.danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+
+.fullWidth {
+  width: 100%;
+}
