@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Page } from '@/components/layout/Page';
 import { AsyncBoundary } from '@/components/common/AsyncBoundary';
@@ -114,12 +114,22 @@ export function InspectionReportPage() {
     [inspectionId, page, appliedFilter],
   );
   const findings = useAsyncResource(findingsLoader, [inspectionId, page, appliedFilter]);
+  const refreshFindings = findings.refresh;
   // While a scan is still running, keep the findings view fresh too.
   useEffect(() => {
     if (!isRunning) return;
-    const timer = setInterval(findings.refresh, 2500);
+    const timer = setInterval(refreshFindings, 2500);
     return () => clearInterval(timer);
-  }, [isRunning, findings.refresh]);
+  }, [isRunning, refreshFindings]);
+  // The interval above is torn down the instant the scan reaches a terminal
+  // state, which can leave the list showing the last in-progress (empty) poll.
+  // Do one more fetch on the running -> finished transition so results appear
+  // without a manual reload.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !isRunning) refreshFindings();
+    wasRunning.current = isRunning;
+  }, [isRunning, refreshFindings]);
 
   return (
     <Page>
