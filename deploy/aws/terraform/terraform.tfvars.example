@@ -1,0 +1,28 @@
+# ==============================================================================
+# CRYPTIQ TERRAFORM DEPLOYMENT VARIABLES (EXAMPLE)
+# Copy this file to terraform.tfvars or pass variables via -var flags / env vars.
+#
+# DO NOT PUT SECRETS OR GEMINI API KEYS IN THIS FILE.
+# GEMINI_API_KEY MUST BE PROVISIONED MANUALLY IN AWS SSM PARAMETER STORE.
+# ==============================================================================
+
+aws_region   = "us-east-1"
+project_name = "CRYPTIQ"
+environment  = "demo"
+
+# Compute & Networking
+instance_type = "t3.medium"
+allowed_cidr  = "0.0.0.0/0"
+vpc_cidr      = "10.20.0.0/16"
+subnet_cidr   = "10.20.1.0/24"
+
+# Storage
+root_volume_size = 30
+data_volume_size = 10
+
+# Application Source
+repo_url = "https://github.com/Adhithya1804/cryptiq.git"
+repo_ref = "aws-demo-deploy-layer"
+
+# Monitoring & Cost Control
+log_retention_days = 3

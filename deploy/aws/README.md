@@ -1,199 +1,198 @@
-# Cryptiq — AWS hackathon deployment
+# Cryptiq — AWS Deployment
 
-A **temporary, single-instance** deployment of the existing Docker Compose
-stack. Not a production SaaS architecture — no Route 53, ALB, RDS, ECS/EKS,
-NAT Gateway, autoscaling, or multi-region. One EC2 instance, one public port.
+This directory contains the deployment infrastructure for CRYPTIQ on Amazon Web Services (AWS).
 
-It deploys into a **clean AWS account with no VPC**: by default the stack
-creates the minimal networking it needs (`CreateNetwork=true`). If you already
-have networking, set `CreateNetwork=false` and pass `VPC_ID` / `SUBNET_ID`.
+> **DEPLOYMENT STATUS:**
+> - **PRIMARY / AUTHORITATIVE:** **Terraform** (`deploy/aws/terraform/`)
+> - **LEGACY / DEPRECATED:** **CloudFormation** (`deploy/aws/cloudformation/`) retained for historical reference only.
+
+---
+
+## 1. Target Architecture
+
+CRYPTIQ runs as a single-instance, cost-optimized, secure demonstration stack:
 
 ```
-                       Internet
-                          │  TCP 80 (only)
-                          ▼
-                   Internet Gateway
-                          │
-                   public route table  (0.0.0.0/0 → IGW)
-                          │
-        ┌─────────────────────────────────────────┐
-        │  VPC 10.20.0.0/16 · public subnet        │  ← created by the stack
-        │  (CreateNetwork=true), or your own       │     when CreateNetwork=true
-        ├─────────────────────────────────────────┤
-        │  EC2 t3.medium · Amazon Linux 2023       │
-        │                                         │
-        │  nginx :80 (container)                   │
-        │    ├─ /      → frontend:8080  (React SPA)│
-        │    └─ /api/  → backend:8000   (FastAPI)  │
-        │                                         │
-        │  FastAPI + in-process scan worker       │
-        │                                         │
-        │  SQLite  ──►  /data  ──►  encrypted EBS  │
-        └───────┬───────────────────┬─────────────┘
-                │ container stdout  │ /var/log/cloud-init-output.log
-                ▼ (awslogs driver)  ▼ (CloudWatch agent)
-        CloudWatch Logs: /cryptiq/{backend,frontend,nginx,bootstrap}  (3-day retention)
+                      Internet
+                         │ TCP 80 (only)
+                         ▼
+                  Internet Gateway
+                         │
+                  Route Table (0.0.0.0/0 -> IGW)
+                         │
+        ┌──────────────────────────────────────────────┐
+        │  VPC 10.20.0.0/16 · Public Subnet 10.20.1.0/24 │
+        ├──────────────────────────────────────────────┤
+        │  EC2 t3.medium · Amazon Linux 2023           │
+        │                                              │
+        │  Nginx :80 (Reverse Proxy)                   │
+        │    ├─ /      ──► Frontend:8080 (React SPA)   │
+        │    └─ /api/  ──► Backend:8000  (FastAPI)     │
+        │                                              │
+        │  FastAPI + In-Process Scan Worker            │
+        │                                              │
+        │  SQLite ──► /data ──► Encrypted EBS (10 GiB) │
+        └──────────────┬──────────────────┬────────────┘
+                       │ container logs   │ cloud-init
+                       ▼                  ▼
+             CloudWatch Log Groups: /cryptiq/{backend,frontend,nginx,bootstrap}
 
-   Operator access : SSM Session Manager      (no SSH, no key pair, port 22 closed)
-   Secrets         : SSM Parameter Store SecureString  →  instance role  →  /opt/cryptiq/.env
+    Operator access : SSM Session Manager (no SSH, no key pair, port 22 closed)
+    Secrets         : SSM Parameter Store SecureString → instance role → /opt/cryptiq/.env
 ```
 
-The backend and frontend container ports are **never published to the host**;
-`8000` / `5432` / `22` are not in the security group. Only `80` is open
-(`0.0.0.0/0` by default — narrow it with `ALLOWED_CIDR`).
+### Key Architectural Properties
+* **Port Isolation**: External security group permits ONLY **TCP port 80**. Container ports 8000 (FastAPI), 8080 (Frontend), and host port 22 (SSH) are blocked externally.
+* **Single-Origin Routing**: Nginx routes `/` to the React frontend and `/api/` to the FastAPI backend. The frontend uses a relative `/api/v1` base URL, avoiding CORS.
+* **Storage Persistence**: SQLite database resides at `/data/cryptiq.db` on a dedicated, encrypted `gp3` EBS volume (mounted at `/data`). Findings survive container restarts.
+* **Strict Least-Privilege IAM**: Managed via Session Manager (`AmazonSSMManagedInstanceCore`), with scoped CloudWatch log write permissions and scoped SSM read/decrypt on `/cryptiq/*`.
+* **Zero Secrets in State**: The Gemini API key is never placed in Terraform configuration, `.tfvars`, or Terraform state.
 
-## Files
+---
 
-| Path | Purpose |
-|---|---|
-| `cloudformation/cryptiq-demo.yaml` | The whole stack: (optional) VPC + public subnet + Internet Gateway + route table, EC2, 2× encrypted EBS, security group, IAM role + instance profile, 4 CloudWatch log groups. `CreateNetwork=true` (default) builds the networking; `CreateNetwork=false` consumes `VpcId`/`SubnetId`. `cfn-lint` clean. |
-| `user-data.sh` | First-boot bootstrap: Docker + Compose plugin + CloudWatch agent, mount the data volume, pull secrets from SSM, `compose up`, health-gate. |
-| `compose/docker-compose.aws.yml` | Standalone Compose stack: adds the public `nginx :80`, drops all other published ports, builds the frontend with `VITE_API_BASE_URL=/api/v1`, runs the backend `production` profile, ships logs via `awslogs`. |
-| `compose/nginx.conf` | The `:80` reverse proxy. `client_max_body_size 1m`. |
-| `cloudwatch/README.md` | Log-group layout, the events emitted, the "no secret leaked" check. |
-| `iam/instance-role-policy.json` | Review copy of the least-privilege inline policy. |
-| `scripts/setup.sh` | Put the optional `GEMINI_API_KEY` into SSM (SecureString). |
-| `scripts/deploy.sh` | Preflight (`aws`/`curl`/template present, `aws sts get-caller-identity`, VPC/subnet resolve) → `cloudformation deploy --no-fail-on-empty-changeset` → **external** health + port-exposure checks. Dumps stack events on failure. Fails loudly with distinct exit codes. |
-| `scripts/teardown.sh` | Delete everything billable and **verify** it is gone. |
+## 2. Directory Structure
 
-## Prerequisites
+```text
+deploy/aws/
+├── terraform/               # PRIMARY: Authoritative Terraform configuration
+│   ├── versions.tf          # Terraform and AWS provider versions
+│   ├── providers.tf         # AWS provider and default resource tags
+│   ├── variables.tf         # Parameterized deployment variables
+│   ├── locals.tf            # Naming, tagging, and log group locals
+│   ├── network.tf           # VPC, Internet Gateway, Subnet, Route Table
+│   ├── security.tf          # Security group (TCP 80 only)
+│   ├── iam.tf               # Least-privilege EC2 role, profile, and policies
+│   ├── ssm.tf               # SSM parameter architectural boundary documentation
+│   ├── cloudwatch.tf        # CloudWatch log groups with 3-day retention
+│   ├── ec2.tf               # t3.medium instance, IMDSv2, EBS volumes
+│   ├── outputs.tf           # Public URL, IP, instance ID, SSM commands
+│   ├── user_data.sh.tftpl   # EC2 bootstrap script template
+│   ├── terraform.tfvars.example
+│   ├── .gitignore
+│   └── README.md            # Detailed Terraform documentation
+├── scripts/
+│   ├── deploy.sh            # Automated Terraform deployment & health verification
+│   ├── teardown.sh          # Automated Terraform destroy & cleanup
+│   ├── setup.sh             # Safely store Gemini API key in SSM Parameter Store
+│   └── refresh-secrets.sh   # Safely reload SSM secrets and restart backend
+├── compose/
+│   ├── docker-compose.aws.yml # Production multi-container composition
+│   └── nginx.conf           # Single-origin reverse proxy configuration
+├── cloudwatch/
+│   └── README.md            # Log group definitions and event structure
+├── iam/
+│   └── instance-role-policy.json # Reference IAM policy for review
+└── cloudformation/          # LEGACY: Deprecated CloudFormation template
+    └── cryptiq-demo.yaml
+```
 
-* **AWS CLI v2** on `PATH`, plus `curl`. `deploy.sh` checks both and the
-  template file before it touches AWS.
-* **Valid credentials.** `deploy.sh` runs `aws sts get-caller-identity` first
-  and stops with exit code `3` and a remediation list if they are missing or
-  expired — nothing is created. Set them with `aws configure`, `AWS_PROFILE`,
-  `aws sso login`, or the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
-  environment variables.
-* **A standard region.** Opt-in regions that the account has not enabled
-  (e.g. `ap-south-2`) reject every call with `InvalidClientTokenId` even when
-  the credentials are fine. Pass `AWS_REGION=us-east-1` (or another enabled
-  region) if your CLI default is an opt-in region.
-* **This repository pushed to a public git URL**, with `deploy/aws/` committed.
-  The instance `git clone`s `REPO_URL` at `REPO_REF` on first boot and runs
-  `deploy/aws/user-data.sh` from the clone — uncommitted local changes are not
-  deployed. A private repo would need a baked AMI (out of scope).
-* **Networking — nothing required.** By default (`CREATE_NETWORK=true`) the
-  stack creates a minimal VPC (`10.20.0.0/16`), one public subnet
-  (`10.20.1.0/24`), an Internet Gateway and a route table — no NAT Gateway.
-  This is the reproducible path and works on an account with **no VPC at all**.
-  To reuse existing networking instead, set `CREATE_NETWORK=false` and pass
-  `VPC_ID` + `SUBNET_ID` (a public subnet); `deploy.sh` will also fall back to
-  the account's default VPC in that mode. A pre-existing VPC passed this way is
-  never modified or deleted by `teardown.sh`.
+---
 
-## Deploy
+## 3. Quick Start (Primary Workflow)
+
+### Deploying Infrastructure
 
 ```bash
-# 1. (optional) store the Gemini key — skip entirely to run without AI explanations
-GEMINI_API_KEY=... deploy/aws/scripts/setup.sh
+cd deploy/aws/terraform
 
-# 2a. MODE 1 — clean account, stack builds the VPC/subnet/IGW (default)
-REPO_URL=https://github.com/<you>/<repo>.git \
-REPO_REF=<tag-or-branch> \
-AWS_REGION=us-east-1 \
+# 1. Initialize
+terraform init
+
+# 2. Review execution plan
+terraform plan
+
+# 3. Apply
+terraform apply
+```
+
+Alternatively, use the convenience wrapper script:
+```bash
 deploy/aws/scripts/deploy.sh
-
-# 2b. MODE 2 — reuse existing networking
-REPO_URL=... REPO_REF=... AWS_REGION=us-east-1 \
-CREATE_NETWORK=false VPC_ID=vpc-xxxx SUBNET_ID=subnet-xxxx \
-deploy/aws/scripts/deploy.sh
 ```
 
-`CREATE_NETWORK` defaults to `true`. In that mode `VPC_ID`/`SUBNET_ID` must be
-unset — the stack owns the networking and `teardown.sh` removes it. In
-`CREATE_NETWORK=false` mode the networking you supply (or the account default
-VPC) is used as-is and left untouched on teardown.
+### Connecting to the Host
+Administration is done strictly via **AWS Systems Manager Session Manager** (no SSH keys or port 22):
+```bash
+aws ssm start-session --target <instance-id> --region us-east-1
+```
 
-`deploy.sh` prints the public URL, the SSM session command, and the log-tail
-command on success. Exit codes:
+---
 
-| Code | Meaning |
-|---|---|
-| `2` | Missing prerequisite (`aws`/`curl`/template), no `REPO_URL`, bad `ALLOWED_CIDR`/`CREATE_NETWORK`, or `CREATE_NETWORK=false` with no usable VPC/subnet — nothing created. |
-| `3` | `aws sts get-caller-identity` failed — credentials missing/expired/wrong region. Nothing created. |
-| `1` | Stack created but `http://<ip>/healthz`, `/api/v1/health`, `/api/v1/health/ready`, or `/` never came up, or `8000/5432/22` were reachable from outside. On a CloudFormation failure the last 25 stack events are printed. |
+## 4. Gemini API Key Configuration (Zero-Secret Workflow)
 
-It is safe to re-run: `cloudformation deploy --no-fail-on-empty-changeset`
-updates the stack in place, and a no-op re-run exits `0`. Set `SKIP_HEALTH=1`
-to create/update the stack without blocking on the external health gate.
+The deployment functions completely whether the Gemini key is present or absent:
+- **Without Key**: Deterministic scanning, static analysis, and Context-Aware Migration Advisor run at 100% functionality. The AI explanation endpoint gracefully reports `HTTP 503 (AI_EXPLANATION_UNAVAILABLE)`.
+- **With Key**: AI explanations activate dynamically.
 
-## Operate
+### Adding the Secret Manually in AWS
+1. Navigate to **AWS Systems Manager** → **Parameter Store**.
+2. Click **Create parameter**.
+3. Configure:
+   - **Name**: `/cryptiq/GEMINI_API_KEY`
+   - **Type**: `SecureString`
+   - **KMS Key source**: `My current account` (`alias/aws/ssm`)
+   - **Value**: `<your-api-key>`
+4. Click **Create parameter**.
+
+Or run the interactive prompt helper:
+```bash
+deploy/aws/scripts/setup.sh
+```
+
+### Dynamically Refreshing the Runtime
+To activate the key without rebuilding images or modifying Terraform state:
+```bash
+# From operator laptop:
+INSTANCE_ID=<instance-id> AWS_REGION=us-east-1 deploy/aws/scripts/refresh-secrets.sh
+
+# Or directly on EC2 via SSM Session:
+bash /opt/cryptiq/app/deploy/aws/scripts/refresh-secrets.sh
+```
+
+---
+
+## 5. Health Verification Probes
 
 ```bash
-aws ssm start-session --target <instance-id> --region <region>   # shell, no SSH
-aws logs tail /cryptiq/backend --follow --region <region>        # live app logs
+# Nginx reverse proxy
+curl -fsS http://<public-ip>/healthz
+
+# Backend application liveness
+curl -fsS http://<public-ip>/api/v1/health
+
+# Backend database readiness
+curl -fsS http://<public-ip>/api/v1/health/ready
+
+# Frontend SPA
+curl -fsS http://<public-ip>/
+
+# Verify closed ports (must time out / reject)
+curl --connect-timeout 4 http://<public-ip>:22/
+curl --connect-timeout 4 http://<public-ip>:8000/
 ```
 
-Inside the instance, the app lives at `/opt/cryptiq/app`:
+---
+
+## 6. Teardown
 
 ```bash
-cd /opt/cryptiq/app
-docker compose -f deploy/aws/compose/docker-compose.aws.yml ps
-docker compose -f deploy/aws/compose/docker-compose.aws.yml restart backend
+cd deploy/aws/terraform
+terraform destroy -auto-approve
 ```
-
-## Persistence
-
-SQLite is a bind mount to `/data`, backed by a dedicated encrypted EBS volume
-(`/dev/sdf`, `mkfs.xfs` on first boot, `nofail` in `/etc/fstab`). Findings
-survive:
-
-* `docker compose restart backend` — volume is untouched;
-* `docker compose down && up` — bind mount, not a named volume;
-* instance stop/start — the EBS volume persists.
-
-They do **not** survive `teardown.sh` (the volume has `DeleteOnTermination:
-true` — this is a throwaway demo).
-
-## Cost (us-east-1, on-demand, approximate)
-
-| Resource | Rate | 2-hour demo | Full day |
-|---|---|---|---|
-| EC2 t3.medium | $0.0416/hr | ~$0.09 | ~$1.00 |
-| EBS gp3 30 + 10 GiB | $0.08/GiB-mo | ~$0.01 | ~$0.11 |
-| CloudWatch Logs (few MB, 3-day) | $0.50/GB ingest | <$0.01 | <$0.01 |
-| Data transfer out (demo traffic) | $0.09/GB | <$0.05 | <$0.20 |
-| **Total** | | **≈ $0.15** | **≈ $1.35** |
-
-No NAT Gateway, no ALB, no Elastic IP, no RDS. A VPC, subnet, Internet Gateway
-and route table are free. Comfortably inside ~$100 of credits. The only thing
-that runs up a bill is forgetting to tear down — so:
-
-## Teardown
-
+Or via script:
 ```bash
-AWS_REGION=us-east-1 deploy/aws/scripts/teardown.sh
+deploy/aws/scripts/teardown.sh
 ```
 
-Deletes the stack (EC2, both EBS volumes, security group, IAM role + instance
-profile, all four log groups, **and — when `CreatedNetwork=true` — the VPC,
-public subnet, Internet Gateway and route table this stack created**) plus the
-`/cryptiq/GEMINI_API_KEY` parameter, then verifies: stack `DELETE_COMPLETE`, no
-`cryptiq-demo` instances, no `/cryptiq/` log groups, no `/cryptiq/` SSM
-parameters, and the stack-created VPC is gone. Exits non-zero if anything
-remains.
+---
 
-`teardown.sh` reads the stack's `CreatedNetwork` / `VpcId` outputs **before**
-deleting it. Networking is only ever touched when `CreatedNetwork=true` and only
-for that exact VPC id — a VPC supplied through `VPC_ID`/`SUBNET_ID`
-(`CreatedNetwork=false`) is left completely untouched.
+## 7. Cost Breakdown (Hackathon Demo Footprint)
 
-## Emergency recovery
-
-| Symptom | Action |
-|---|---|
-| backend unhealthy | `docker compose -f deploy/aws/compose/docker-compose.aws.yml restart backend` |
-| frontend unhealthy | `... restart frontend` |
-| Docker wedged | `sudo systemctl restart docker` then `... up -d` |
-| a scan failed (bad repo / missing commit) | expected — the API returns a stable error code, the worker marks the scan `FAILED`, capacity is released; no action needed |
-| Gemini unavailable | expected with no key — `POST /findings/{id}/explanation` returns `503 AI_EXPLANATION_UNAVAILABLE`; deterministic findings are unaffected |
-| instance lost | re-run `deploy/aws/scripts/deploy.sh` (new public IP; SQLite starts empty) |
-
-## What this is not
-
-Single instance = single point of failure and a hard scaling ceiling. SQLite +
-one in-process worker is deliberate for a demo with a handful of users. The
-in-flight scan cap (`MAX_IN_FLIGHT_SCANS`, HTTP 429) and the body-size limit
-are bounded back-pressure, not a production abuse-prevention system. See the
-root `CRYPTIQ_FINAL_IMPLEMENTATION_READINESS_REPORT.md` §9 for the full list.
+| Resource | Size / Spec | Estimated Cost |
+|---|---|---|
+| EC2 | 1× `t3.medium` | ~$0.0416 / hr (~$1.00 / day) |
+| Root Storage | 30 GiB gp3 encrypted | ~$0.08 / day |
+| Data Storage | 10 GiB gp3 encrypted | ~$0.03 / day |
+| Networking | VPC, Subnet, IGW (no NAT GW, no ALB) | Free |
+| CloudWatch | 4 log groups (3-day retention) | < $0.05 / day |
+| **Total** | **Minimal single-node demo** | **~$1.15 / day** |

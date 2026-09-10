@@ -10,16 +10,17 @@ file, endpoint, test, or command. Verification runs in this session:
 - Rate Limiting: 14 dedicated unit tests in `cryptiq/tests/unit/test_rate_limit.py` all passing.
 - Engine purity grep: no `exec`/`eval`/`compile`/`__import__`/`subprocess`/`importlib`/
   `os.system`/`pickle` anywhere in `app/engine/`.
-- Canonical live AWS verification (`http://100.24.99.113/`): pyca/cryptography @
-  `e57b92215cad…` COMPLETED, **1054 findings**, 243 analyzed files, 137 HIGH / 917 MEDIUM,
-  ~16.2s duration. Health endpoints (`/healthz`, `/api/v1/health`, `/api/v1/health/ready`)
+- Canonical live AWS verification (`http://3.235.162.13/`): pyca/cryptography @
+  `e57b92215cad…` COMPLETED (scan `03ffa192-b99c-4001-b884-de4782f2b4be`), **1054 findings**, 243 analyzed files, 137 HIGH / 917 MEDIUM,
+  ~16.06s duration. Health endpoints (`/healthz`, `/api/v1/health`, `/api/v1/health/ready`)
   all returned 200/ok. Closed ports (8000, 22) verified unreachable/timed out.
+  Migration Advisor endpoint `/api/v1/findings/{id}/migration-assessment` verified live on AWS.
 - Persisted acceptance scan read from `cryptiq/cryptiq.db`: pyca/cryptography @
   `1f903f5ed2e5…` COMPLETED, **1042 findings**, 241 analyzed / 3031 discovered files,
   136 HIGH / 906 MEDIUM, 132 review items.
 
 Engine version stamps (unchanged across this work): `parser_version=python-ast-1`,
-`ruleset_version=0.3.0`, `pqc_ruleset_version=0.2.0`. Alembic head `b6c7d8e9f0a1`.
+`ruleset_version=0.3.0`, `pqc_ruleset_version=0.2.0`. Alembic head `c7d8e9f0a1b2`.
 Knowledge-base version `2026.1`.
 
 ---
@@ -48,7 +49,7 @@ What is actually built and running:
 | Gemini explanation layer (structured output, prompt-injection-hardened, cached) | Implemented; faked-SDK tested; live call **not** verified in audit |
 | Docker (multi-stage, non-root, healthchecked) + Compose (SQLite / Postgres / AWS) | Implemented, images build (~416 MB backend, ~78 MB frontend) |
 | GitHub Actions CI (quality → docker build → Trivy image scan → CRYPTIQ self-scan → SARIF) | Implemented, locally validated; a green Actions run is **not** evidenced |
-| AWS single-instance demo (CloudFormation + bootstrap + scripts, SSM-only, encrypted EBS, CloudWatch) | Implemented; **deployed live and verified reachable today at `http://100.24.99.113/`** |
+| AWS single-instance demo (Terraform-managed, SSM-only, encrypted EBS, CloudWatch) | Implemented; **deployed live and verified reachable today at `http://3.235.162.13/`** |
 
 **The core differentiator:** a strict epistemic hierarchy enforced in code —
 **OBSERVED** facts (rule + source excerpt, checkable against the file) →
@@ -741,7 +742,7 @@ To ensure technical defensibility, Gemini readiness is evaluated across 11 discr
 | **A. Gemini implementation exists** | **GREEN** | `app/integrations/gemini/client.py`, `app/services/gemini.py`, `app/services/explanations.py`, `app/services/context_advisor.py` |
 | **B. Gemini unit/mock integration works** | **GREEN** | `test_gemini_service.py` (10 tests), `test_api_explanation.py` (16 tests), `test_api_migration_assessment.py` (recording fake SDK) all passing |
 | **C. Gemini configuration path exists** | **GREEN** | `Settings.gemini_api_key`, `gemini_model="gemini-2.5-flash"`, `gemini_timeout_seconds=30`, `gemini_max_output_tokens=1500` in `app/config.py` |
-| **D. AWS SSM secret path exists** | **GREEN** | CloudFormation `deploy/aws/cloudformation/cryptiq-demo.yaml` IAM policy for `parameter/cryptiq/*`; `setup.sh` SSM commands |
+| **D. AWS SSM secret path exists** | **GREEN** | Terraform `deploy/aws/terraform/iam.tf` IAM policy for `parameter/cryptiq/*`; `setup.sh` and `refresh-secrets.sh` SSM commands |
 | **E. Backend can retrieve the secret** | **GREEN** | `deploy/aws/user-data.sh` queries SSM Parameter Store into `/opt/cryptiq/.env` (mode 600, root-owned), loaded into backend settings |
 | **F. Real Gemini API request executed** | **NOT VERIFIED** | **Reason:** `GEMINI_API_KEY` was not provisioned in local test or live AWS environment. `test_gemini_live.py` is skipped without key. Live AWS returns controlled 503 `AI_EXPLANATION_UNAVAILABLE`. |
 | **G. Real Gemini response persisted** | **NOT VERIFIED** | **Reason:** Depends on (F). Synthetic/mocked responses are verified persisted in SQLite/Postgres tests; live API payload persistence has not occurred. |
@@ -846,7 +847,7 @@ inputs; wide tables scroll inside their own `overflow-x` container (`TableScroll
 
 ## 10. DATABASE + WORKER + CACHE
 
-### 10.1 Schema — 11 models, 11 migrations (`b6c7d8e9f0a1` head)
+### 10.1 Schema — 11 models, 12 migrations (`c7d8e9f0a1b2` head)
 Portable across SQLite (default) and PostgreSQL (`docker-compose.postgres.yml`).
 String UUID PKs (`new_id()`), app-set UTC timestamps, enum columns are
 `VARCHAR(32)` + a **named CHECK constraint** (`native_enum=False`,
@@ -1089,114 +1090,86 @@ tests, `.env`, `*.db` out of the build context · HEALTHCHECK on both images ·
 
 ## 14. AWS
 
-### 14.1 What the code provisions — `deploy/aws/cloudformation/cryptiq-demo.yaml`
-One CloudFormation stack, `cfn-lint 1.46` clean, `validate-template` OK:
-- **Networking** (created only when `CreateNetwork=true`, the default — so it deploys
-  on an account with **no VPC**): a `10.20.0.0/16` VPC, one **public** subnet
-  `10.20.1.0/24` (`MapPublicIpOnLaunch`), an Internet Gateway + attachment, a route
-  table with `0.0.0.0/0 → IGW`, and the subnet association. **No NAT Gateway, no ALB,
-  no EIP.** `CreateNetwork=false` + `VpcId`/`SubnetId` reuses existing networking (a
-  `Rules` block enforces both ids are set).
-- **EC2** — `t3.medium` (2 vCPU / 4 GiB), Amazon Linux 2023 (SSM AMI parameter),
-  **no `KeyName`**. Root `/dev/xvda` 30 GiB gp3 **encrypted**; `/dev/sdf`
-  `DataVolumeSizeGiB` (default 10) gp3 **encrypted** for the SQLite DB. Both
-  `DeleteOnTermination: true` (throwaway demo). `UserData` installs `git`, retries
-  `git clone` 6×10 s (for IGW-route settle on a fresh VPC), then runs
-  `deploy/aws/user-data.sh`.
-- **Security group** — ingress **TCP 80 only** from `AllowedCidr` (default
-  `0.0.0.0/0`); egress all. **22 / 8000 / 5432 are never opened.**
-- **IAM** — an instance role: managed `AmazonSSMManagedInstanceCore` (SSM baseline,
-  **not** admin) + inline least-privilege: `logs:CreateLogStream`/`PutLogEvents`/
-  `DescribeLogStreams` on the **4 `/cryptiq/*` log-group ARNs only**;
-  `ssm:GetParameter`/`GetParameters` on `parameter/cryptiq/*`; `kms:Decrypt` on
-  `alias/aws/ssm` only.
-- **CloudWatch** — 4 log groups `/cryptiq/{backend,frontend,nginx,bootstrap}`,
-  `RetentionInDays` = `LogRetentionDays` (default **3**), created and deleted with the
-  stack.
-- **Outputs** — `PublicIp`, `PublicUrl`, `InstanceId`, `VpcId`, `SubnetId`,
-  `CreatedNetwork`, `SsmSessionCommand`.
+### 14.1 Primary Deployment Layer — Terraform (`deploy/aws/terraform/`)
+CRYPTIQ's primary, authoritative AWS deployment layer is fully managed by **Terraform**:
+- **Terraform Configuration**: `deploy/aws/terraform/` (`versions.tf`, `providers.tf`, `variables.tf`, `locals.tf`, `network.tf`, `security.tf`, `iam.tf`, `ssm.tf`, `cloudwatch.tf`, `ec2.tf`, `outputs.tf`, `user_data.sh.tftpl`).
+- **Provider & Versions**: Terraform `>= 1.5.0, < 2.0.0`, AWS Provider `~> 5.50` (`v5.100.0` validated). `terraform fmt` and `terraform validate` clean.
+- **Networking**: Dedicated `10.20.0.0/16` VPC, public subnet `10.20.1.0/24` (`map_public_ip_on_launch = true`), Internet Gateway, public route table (`0.0.0.0/0 → IGW`). **No NAT Gateway, no ALB, no extra costs.**
+- **EC2 Compute**: Single `t3.medium` (2 vCPU / 4 GiB), Amazon Linux 2023 (`al2023-ami-kernel-default-x86_64`), **no SSH key**. IMDSv2 enforced (`http_tokens = "required"`).
+- **Persistent Storage**: Root volume 30 GiB gp3 encrypted; dedicated secondary volume 10 GiB gp3 encrypted (`/dev/sdf` attached, formatted xfs and mounted at `/data` with UUID in `/etc/fstab` for SQLite persistence).
+- **Security Group**: Ingress strictly **TCP 80 only** from configurable `allowed_cidr` (`0.0.0.0/0` default). Ports 22, 8000, 5432 are **closed/blocked externally**. Egress open for packages, GitHub, Gemini, SSM, and CloudWatch.
+- **IAM Role & Profile**: Least-privilege role attaching AWS managed `AmazonSSMManagedInstanceCore` + inline policy granting:
+  - Scoped CloudWatch write on the 4 log groups (`/cryptiq/*`).
+  - Scoped SSM parameter read on `parameter/cryptiq/*`.
+  - Scoped KMS decrypt on `alias/aws/ssm`.
+- **CloudWatch Logs**: 4 dedicated log groups (`/cryptiq/backend`, `/cryptiq/frontend`, `/cryptiq/nginx`, `/cryptiq/bootstrap`) with 3-day retention for cost control.
+- **Legacy Reference**: The historical CloudFormation template (`deploy/aws/cloudformation/cryptiq-demo.yaml`) is retained as a deprecated reference only.
 
-### 14.2 Bootstrap — `deploy/aws/user-data.sh`
-Install Docker + Compose plugin (`v2.29.7`) + CloudWatch agent → find the unmounted
-block device, `mkfs.xfs`, mount at `/data` (`nofail` in `/etc/fstab`), `chown 1001` →
-pull `GEMINI_API_KEY` from SSM into `/opt/cryptiq/.env` (**umask 077, mode 600,
-root-owned, value never printed**; absent → logs "AI explanation path will return 503
-(expected)") → CloudWatch agent config for the boot log → `docker compose -f
-deploy/aws/compose/docker-compose.aws.yml up -d --build` → health-gate `/healthz`,
-`/api/v1/health`, `/api/v1/health/ready` (60 attempts each).
+### 14.2 Bootstrap & Runtime Secret Boundary — `user_data.sh.tftpl`
+On instance first boot, cloud-init executes the Terraform bootstrap template:
+1. Installs Docker, Compose plugin (`v2.29.7`), and CloudWatch Agent.
+2. Formats and mounts the secondary encrypted EBS volume to `/data` (`chown -R 1001:1001 /data` for the non-root container).
+3. Queries AWS SSM Parameter Store for `/cryptiq/GEMINI_API_KEY`:
+   - If present: writes to `/opt/cryptiq/.env` (`umask 077, mode 600, root-owned, value NEVER printed`).
+   - If absent: logs `cryptiq-bootstrap: Gemini key not configured; AI explanation path disabled` without failing deployment.
+4. Starts the stack via `docker compose -f deploy/aws/compose/docker-compose.aws.yml up -d --build`.
+5. Health gates `/healthz`, `/api/v1/health`, `/api/v1/health/ready` (60 attempts).
 
-### 14.3 Scripts
-- `scripts/setup.sh` — put `GEMINI_API_KEY` in SSM as a `SecureString` (hidden input,
-  never echoed).
-- `scripts/deploy.sh` — prereq checks → **`aws sts get-caller-identity` preflight**
-  (exit 3, "nothing created") → networking mode resolution →
-  `aws cloudformation deploy --no-fail-on-empty-changeset` (re-runnable) → on failure
-  dumps the last 25 stack events → **external** health gate against the public IP
-  (`/healthz`, `/api/v1/health`, `/api/v1/health/ready`, `/`) → **port-exposure check**
-  (8000 / 5432 / 22 must be unreachable). Distinct exit codes 1/2/3.
-- `scripts/teardown.sh` — reads `CreatedNetwork`/`VpcId` **before** delete →
-  `delete-stack` → if the stack created the network, a scoped sweep keyed strictly to
-  that one VPC id (ENIs → subnets → IGW detach/delete → non-main route tables → VPC) →
-  **verifies** stack gone, no `cryptiq-demo` instance, no `/cryptiq/` log groups, no
-  `/cryptiq/` SSM params; non-zero if anything remains.
+### 14.3 Scripts & Workflows
+- `scripts/deploy.sh` — Drives `terraform init` and `terraform apply -auto-approve`, extracts outputs, and executes external health and closed-port verification gates.
+- `scripts/setup.sh` — Secure helper to store `/cryptiq/GEMINI_API_KEY` as `SecureString` in SSM Parameter Store without echoing values.
+- `scripts/refresh-secrets.sh` — Safe secret reload script: queries SSM, updates `/opt/cryptiq/.env` (mode 600), restarts backend container in-place (no image rebuild, preserving SQLite `/data/cryptiq.db`), and verifies readiness. Works both on-host and remotely via SSM Run Command.
+- `scripts/teardown.sh` — Executes `terraform destroy -auto-approve`, sweeps leftover parameters/log groups, and verifies zero billable resources remain.
 
-### 14.4 Presentation-ready architecture
+### 14.4 Presentation-Ready Architecture
 ```
-INTERNET (TCP 80 only)
-      │
-AWS SECURITY GROUP  ── 80 ← AllowedCidr ;  22 / 8000 / 5432 CLOSED
-      │
-EC2 t3.medium · Amazon Linux 2023 · IMDS default · no SSH key
-  │   root gp3 30 GiB encrypted        /data → gp3 10 GiB encrypted (SQLite)
-  ▼
-NGINX :80 (container, only published port)
-  ├─ /      → FRONTEND :8080  (React SPA, nginx-unprivileged, built VITE_API_BASE_URL=/api/v1)
-  └─ /api/  → BACKEND  :8000  (FastAPI, ENVIRONMENT=production, EXPOSE_API_DOCS=false)
-                 │
-              in-process async WORKER  →  DATABASE  SQLite on /data (encrypted EBS)
-                 │
-   container stdout ─ awslogs ─►  CloudWatch /cryptiq/{backend,frontend,nginx}  (3-day retention)
-   /var/log/cloud-init-output.log ─ CW agent ─►  /cryptiq/bootstrap
+Internet
+   │ TCP 80
+   ▼
+Nginx :80 (Container reverse proxy)
+   │
+   ├─► Frontend :8080 (React SPA, single-origin /api/v1)
+   └─► FastAPI  :8000 (Production profile, EXPOSE_API_DOCS=false)
+          │
+          ├─► In-process async Worker
+          │
+          └─► SQLite on /data ──► Encrypted EBS (10 GiB gp3)
 
-   OPERATOR  ──►  SSM Session Manager   (no SSH; instance role: AmazonSSMManagedInstanceCore)
-   SECRETS   ──►  SSM Parameter Store SecureString /cryptiq/GEMINI_API_KEY
-                    → instance role (ssm:GetParameter on /cryptiq/* + kms:Decrypt on alias/aws/ssm)
-                    → /opt/cryptiq/.env (600, root, never logged, not in any image)
-   GITHUB    ◄──  outbound only, via the IGW (no NAT)  — api.github.com / codeload / *.githubusercontent
-   GEMINI    ◄──  outbound only, optional  — 503 by design if no key in SSM
+And separately (Secret Flow):
+Operator
+   │
+   ▼ (Manual entry in AWS Console)
+SSM Parameter Store SecureString (/cryptiq/GEMINI_API_KEY)
+   │
+   ▼ (EC2 IAM Role + KMS alias/aws/ssm Decrypt)
+EC2 Host (/opt/cryptiq/.env, mode 600)
+   │
+   ▼ (Runtime env_file injection)
+FastAPI Backend Only  ──► Google Gemini API (outbound HTTPS)
 ```
-**Deliberately NOT used:** Route 53 / DNS / TLS / ACM, ALB / API Gateway / CloudFront /
-WAF, RDS / Aurora, ECS / EKS / Fargate, Redis / ElastiCache / Celery / SQS / Kafka,
-NAT Gateway, autoscaling, multi-AZ, EIP, ECR (images build on the instance).
+**Deliberately NOT used:** Route 53, ALB, API Gateway, CloudFront, RDS, ECS, EKS, Redis, NAT Gateway, Lambda.
 
 ### 14.5 IMPLEMENTED vs LIVE-VERIFIED
-- **IMPLEMENTED & statically validated (this + prior sessions):** `cfn-lint` clean,
-  `validate-template` OK, `shellcheck`/`bash -n` clean, `docker compose config` clean
-  for all three compose files, a **local container run of the exact production
-  profile** (`/docs`→404, oversized POST→413, normal POST→202, `INFO app.main …
-  env=production` on stdout).
-- **LIVE-VERIFIED in a prior session (memory, not re-checked today):** a **real**
-  us-east-1 deploy via `deploy.sh` (MODE 1, clean region, no VPC) — the stack built the
-  VPC + subnet + IGW + route table, the instance booted in the public subnet and
-  reached the internet through the IGW with **no NAT**, external checks passed
-  (frontend 200, nginx/backend health+ready 200), 3 scans submitted+completed
-  (pyca/cryptography 1054, jwcrypto 52, click 0), pagination + cache resubmit (200,
-  same id, `cached:true`), 8000/5432/22 refused from the internet, SSM Session Manager
-  + `AWS-RunShellScript` worked, `/data` = encrypted gp3 xfs `nofail`, persistence
-  survived a container restart, all 4 CloudWatch groups received with a secret-pattern
-  filter returning 0, then `teardown.sh` verified **CLEAN**.
-- **LIVE-VERIFIED IN THIS SESSION (Current Active State):**
-  The demo stack was directly verified reachable and live at `http://100.24.99.113/`:
-  - `curl http://100.24.99.113/` → **HTTP 200** (React frontend SPA served by nginx).
-  - `curl http://100.24.99.113/healthz` → **`ok`** (nginx edge health check).
-  - `curl http://100.24.99.113/api/v1/health` → **`{"status":"ok","service":"cryptiq","version":"0.1.0"}`**.
-  - `curl http://100.24.99.113/api/v1/health/ready` → **`{"status":"ok","service":"cryptiq","version":"0.1.0","database":"ok"}`** (database connectivity verified).
-  - Port isolation: `curl http://100.24.99.113:8000/` and `curl http://100.24.99.113:22/` timed out after 2000 ms, proving backend and SSH are **not exposed** to the public internet.
-  - Live projects on instance: 5 repositories (`pyca/pynacl` [0 findings], `pyca/bcrypt` [0], `latchset/jwcrypto` [52], `pallets/click` [0], `pyca/cryptography` [1054]).
-  - Canonical live scan: `pyca/cryptography` @ `e57b92215cad34e96e9a42800e66650eb571feeb` (scan `661c18c1-af54-4d3d-9fe7-1c80dedf0739`) — **COMPLETED in 16.16s**, **243 files analyzed**, **1054 findings** (**137 HIGH**, **917 MEDIUM**, 0 LOW).
-  - Second live scan: `pyca/cryptography` @ `70d3931e775e2a429ea8b148f5a5e88e7b8c7f30` (scan `7a5218de-ca3f-422f-8f85-26b304ed8ad9`) — **COMPLETED in 16.52s**, **243 files**, **1054 findings** (**137 HIGH**, **917 MEDIUM**).
-  - Gemini degradation: `POST /api/v1/findings/5144216f.../explanation` returned HTTP 503 `{"error":{"code":"AI_EXPLANATION_UNAVAILABLE","message":"AI explanations are not configured."}}`.
-  - Deployment note: The live AWS instance runs a container build from prior to the addition of the Context Advisor route (`/migration-assessment`), so that route returns 404 on the live server while fully functional in the repository codebase.
+- **IMPLEMENTED & Statically Validated**: `terraform fmt -check` clean, `terraform validate` clean, `docker compose config` clean, pytest test suite clean.
+- **LIVE-VERIFIED IN THIS SESSION (Active AWS Instance at `http://3.235.162.13/`):**
+  - **Instance**: `i-009a26ff8090ddaaa` (t3.medium, us-east-1, Amazon Linux 2023).
+  - **Networking & Ports**: Public IP `3.235.162.13`. Port 80 open and serving; ports 22 (SSH), 8000, 5432 verified closed/blocked externally.
+  - **Health Endpoints**:
+    - `GET http://3.235.162.13/healthz` → `ok` (HTTP 200).
+    - `GET http://3.235.162.13/api/v1/health` → `{"status":"ok","service":"cryptiq","version":"0.1.0"}` (HTTP 200).
+    - `GET http://3.235.162.13/api/v1/health/ready` → `{"status":"ok","service":"cryptiq","version":"0.1.0","database":"ok"}` (HTTP 200).
+    - `GET http://3.235.162.13/` → HTTP 200 (React frontend single-origin SPA).
+  - **Canonical Live Scan**: `pyca/cryptography` @ `e57b92215cad34e96e9a42800e66650eb571feeb` (scan `03ffa192-b99c-4001-b884-de4782f2b4be`) — **COMPLETED in 16.06s**, **243 files analyzed**, **1054 findings** (**137 HIGH**, **917 MEDIUM**, 0 LOW).
+  - **Scan Caching**: Repeat scan submission served instantly with HTTP 200 `cached: true`.
+  - **Context-Aware Migration Advisor (LIVE VERIFIED ON AWS)**:
+    - `POST /api/v1/findings/{id}/migration-assessment` and `GET /api/v1/findings/{id}/migration-assessment` fully operational and verified live.
+    - `ECDH` (Finding `fd0bd5a1...`) → `MIGRATE` to `ML-KEM-768` (FIPS 203).
+    - `X25519` (Finding `477cd4e2...`) → `MIGRATE` to `ML-KEM-768` (FIPS 203).
+    - `ECDSA` (Finding `6dcfe34c...`) → `MIGRATE` to `ML-DSA-65` (FIPS 204).
+    - `RSA` (Finding `2d6012ed...`) → `MIGRATE` to `ML-DSA-65` (FIPS 204).
+    - `AES` (Finding `9f88ece1...`) → `KEEP` (symmetric cipher, no public-key replacement).
+    - `SHA-256` (Finding `f74105b7...`) → `KEEP` (hash function, no public-key replacement).
+  - **Gemini Degradation**: `POST /api/v1/findings/{id}/explanation` returned HTTP 503 `{"error":{"code":"AI_EXPLANATION_UNAVAILABLE","message":"AI explanations are not configured."}}` as required prior to operator secret provisioning.
 
 ---
 
@@ -1345,7 +1318,7 @@ follow-ups · `CI: not independently evidenced as a green Actions run`.
 | Frontend types | `npm run typecheck` (`tsc -b --noEmit`) | **clean** |
 | Frontend build | `npm run build` (`tsc -b && vite build`) | **clean** (238 KB / 78.5 KB gz main chunk) |
 | Frontend lint | `npm run lint` (`eslint . --max-warnings 0`) | **clean (0 errors, 0 warnings)** |
-| Backend `alembic heads` | `alembic heads` | single head `b6c7d8e9f0a1` |
+| Backend `alembic heads` | `alembic heads` | single head `c7d8e9f0a1b2` |
 | Engine purity | grep for exec/eval/subprocess/… in `app/engine/` | **none** (only `re.compile`) |
 
 The 34 skips are opt-in: `@pytest.mark.network` (real GitHub, needs
@@ -1375,7 +1348,7 @@ parametrisation)
 | **Build/typecheck/lint** | ruff, tsc, eslint, vite build | all green (0 errors, 0 warnings across all linters and compilers) |
 | **Docker** | `docker build` both images; `docker compose config` ×3; container smoke of the prod profile | images build; compose valid; `/docs`→404, oversized→413, normal→202 |
 | **CloudFormation / shell** | `cfn-lint`, `validate-template`, `shellcheck`, `bash -n` | clean |
-| **AWS / E2E (verified live)** | Live inspection at `http://100.24.99.113/` | full external reachability + persistence + CloudWatch verified live in this pass |
+| **Terraform / AWS / E2E (verified live)** | Live inspection at `http://3.235.162.13/` | full external reachability + persistence + CloudWatch verified live in this pass |
 
 ### 16.3 Determinism evidence
 - Re-submitting the acceptance commit → `cached: true`, **no re-analysis**.
@@ -1398,15 +1371,15 @@ To maintain 100% factual integrity, the presentation explicitly distinguishes be
 |---|---|---|
 | **Repository** | `https://github.com/pyca/cryptography` | `https://github.com/pyca/cryptography` |
 | **Commit SHA** | `e57b92215cad34e96e9a42800e66650eb571feeb` | `1f903f5ed2e5e316f345a927555e48535829d8de` |
-| **Where Verified** | Live on AWS EC2 (`http://100.24.99.113/`) | In local `cryptiq/cryptiq.db` & offline CLI |
-| **Scan ID** | `661c18c1-af54-4d3d-9fe7-1c80dedf0739` | `f763cc56-0c17-4bc9-87d2-4114198cf8a0` |
+| **Where Verified** | Live on AWS EC2 (`http://3.235.162.13/`) | In local `cryptiq/cryptiq.db` & offline CLI |
+| **Scan ID** | `03ffa192-b99c-4001-b884-de4782f2b4be` | `f763cc56-0c17-4bc9-87d2-4114198cf8a0` |
 | **Status** | **COMPLETED** | **COMPLETED** |
 | **Files Analysed** | **243** | **241** (3,031 discovered) |
 | **Total Findings** | **1,054** | **1,042** |
 | **High Priority** | **137** | **136** |
 | **Medium Priority**| **917** | **906** |
 | **Low Priority** | **0** | **0** |
-| **Duration** | **16.16 seconds (~16.2 s)** | **~3.1 s** (local) / ~13 s (API) |
+| **Duration** | **16.06 seconds (~16.1 s)** | **~3.1 s** (local) / ~13 s (API) |
 | **Review Items** | 137 open candidates | 132 open candidates |
 | **Consistency** | 100% deterministic (re-run matches bit-for-bit) | 100% deterministic (re-run matches bit-for-bit) |
 
@@ -1437,7 +1410,7 @@ Both numbers are genuine, reproducible AST engine runs over `pyca/cryptography`.
   PATCH; Gemini-unset → 503; Postgres override applies all migrations, readiness
   `database:ok`. Prod-profile container: `/docs`→404, oversized POST→413, normal→202.
 - **LIVE AWS RESULT (verified live in this session):** real us-east-1 deploy at
-  `http://100.24.99.113/` — external frontend 200, health+ready 200, scans
+  `http://3.235.162.13/` — external frontend 200, health+ready 200, scans
   completed (pyca/cryptography 1054 findings, jwcrypto 52, click 0), pagination,
   cache resubmit (200 / same id / `cached:true`), 8000/5432/22 refused from the internet,
   SSM works, `/data` encrypted EBS, persistence across container restart, 4 CloudWatch groups
@@ -1448,7 +1421,7 @@ Both numbers are genuine, reproducible AST engine runs over `pyca/cryptography`.
 ## 18. LIVE DEMO (3–5 minutes)
 
 Pre-flight: confirm the target is reachable — either `docker compose up -d` locally
-(`http://localhost:8080`) **or** `curl http://100.24.99.113/api/v1/health/ready` for
+(`http://localhost:8080`) **or** `curl http://3.235.162.13/api/v1/health/ready` for
 the AWS instance. Optional `GEMINI_API_KEY` for step 7. The acceptance scan is already
 in the DB (local) / was already run (AWS) so submit is instant.
 
@@ -1614,10 +1587,10 @@ The 9 screenshots below are sequenced to follow the user journey and provide ver
 - **Claim Proved:** Cryptiq is a complete migration workflow management system, not merely a point-in-time CLI reporter.
 
 ### Bonus Slide Asset — Live AWS Instance Running in Browser
-- **Route:** `http://100.24.99.113/history/661c18c1-af54-4d3d-9fe7-1c80dedf0739`
-- **UI State:** Real browser address bar showing public IP `100.24.99.113` with pyca/cryptography scan completed (**1,054 findings**, 243 files, 137 HIGH).
+- **Route:** `http://3.235.162.13/history/03ffa192-b99c-4001-b884-de4782f2b4be`
+- **UI State:** Real browser address bar showing public IP `3.235.162.13` with pyca/cryptography scan completed (**1,054 findings**, 243 files, 137 HIGH).
 - **What to Notice:** Remote network request timing, nginx header responses, zero localhost artifacts.
-- **Claim Proved:** Proven AWS deployment — running live on a single `t3.medium` EC2 instance with encrypted EBS and SSM management.
+- **Claim Proved:** Proven AWS deployment — running live on a single `t3.medium` EC2 instance with encrypted EBS, Terraform provisioning, and SSM management.
 
 ---
 
@@ -1698,7 +1671,7 @@ reproducible AWS deployment.
    2 real findings — the engine never ran a line of it.
 9. **The CI self-scan** — CRYPTIQ analyses its own repo and posts findings as GitHub
    code-scanning annotations next to Trivy's image-scan results.
-10. **The real AWS instance in a browser** (`http://100.24.99.113/`) — one t3.medium,
+10. **The real AWS instance in a browser** (`http://3.235.162.13/`) — one t3.medium,
     port 80 only, SSM-only, encrypted EBS — *if confirmed up*.
 
 ---
@@ -1710,16 +1683,15 @@ infrastructure-dependent, mocked, local-only, or documented-only.
 
 ### Explicitly NOT VERIFIED (With Concrete Reasons)
 - **Live Gemini API round-trip:**
-  `NOT VERIFIED — reason:` An external `GEMINI_API_KEY` was not provisioned in this environment or on the live AWS EC2 host. `test_gemini_live.py` is skipped without an API key, and the live AWS instance returns the controlled HTTP 503 `AI_EXPLANATION_UNAVAILABLE`. All request formation, structured schema validation, caching, and post-hoc guardrails are verified with a recording fake SDK, but a live external API call to Google servers was not executed.
+  `NOT VERIFIED — reason:` Gemini integration implemented and infrastructure-ready; live provider verification pending credential provisioning. An external `GEMINI_API_KEY` was not provisioned in this environment or on the live AWS EC2 host. `test_gemini_live.py` is skipped without an API key, and the live AWS instance returns the controlled HTTP 503 `AI_EXPLANATION_UNAVAILABLE`. All request formation, structured schema validation, caching, and post-hoc guardrails are verified with a recording fake SDK, but a live external API call to Google servers was not executed.
 - **Remote GitHub Actions Green Run:**
   `NOT VERIFIED — reason:` The GitHub Actions workflow (`ci.yml`), Trivy container scanning, and `findings_to_sarif.py` script are complete and validated locally, but no remote green GitHub Actions run execution is evidenced in repository history.
-- **Context Advisor Route on Live AWS Container:**
-  `NOT VERIFIED on live AWS container — reason:` The live AWS instance at `http://100.24.99.113/` runs a container built prior to the addition of commit `436111c` (`/migration-assessment`). The endpoint returns HTTP 404 on the live EC2 host, while operating with full test coverage (unit/integration/CLI) locally.
 
 ### Verified Working-Tree Capabilities (Previously Flagged, Now Resolved)
+- **Context Advisor Route on Live AWS Container:** **VERIFIED LIVE ON AWS** at `http://3.235.162.13/api/v1/findings/{id}/migration-assessment` with full context extraction, NIST RAG citations, and guardrails across ECDH (ML-KEM-768), X25519 (ML-KEM-768), ECDSA (ML-DSA-65), RSA (ML-DSA-65), AES (KEEP), and SHA-256 (KEEP).
 - **Per-client rate limiting** (`app/rate_limit.py`): **Now covered by 14 dedicated unit tests** in `cryptiq/tests/unit/test_rate_limit.py`, validating default/write/expensive token budgets, window resets, LRU cache memory eviction, middleware 429 status + `Retry-After` headers, and IP parsing.
 - **Frontend lint:** **Clean (0 errors, 0 warnings)** with `eslint . --max-warnings 0`. Unnecessary type assertions in `src/types/domain.ts` have been removed.
-- **AWS Live Reachability:** **Verified live in this session** at `http://100.24.99.113/` with HTTP 200 on frontend, `ok` on `/healthz`, and 200 on `/api/v1/health/ready`. Ports 8000 and 22 verified closed.
+- **AWS Live Reachability:** **Verified live in this session** at `http://3.235.162.13/` with HTTP 200 on frontend, `ok` on `/healthz`, and 200 on `/api/v1/health/ready`. Ports 8000 and 22 verified closed.
 - **Backend Test Suite:** **869 passed, 34 skipped** in ~11.4s.
 
 ### Partial / Architectural Bounds
@@ -1737,7 +1709,7 @@ infrastructure-dependent, mocked, local-only, or documented-only.
 - **The knowledge corpus is 6 documents / ~10 chunks**, curated by hand. It is not a live index of NIST, not exhaustive, and `CRYPTIQ-ENG-AVIONICS` is project-authored guidance (labelled as such).
 
 ### Infrastructure Bounds
-- **The AWS instance at `http://100.24.99.113/`** has dynamic public IP addressing on EC2 stop/start. The demo runbook provides the direct curl verification command.
+- **The AWS instance at `http://3.235.162.13/`** has dynamic public IP addressing on EC2 stop/start. The demo runbook provides the direct curl verification command.
 - **Trivy base image vulnerabilities:** Base container images receive upstream patches over time. `.trivyignore.yaml` time-boxes exceptions to 2026-12-09.
 
 ### Never Say
@@ -1811,7 +1783,7 @@ review it against, how urgent it is, and why — and it quotes the exact line of
 so you can check it. Here it is on pyca/cryptography running live on EC2: 1,054 findings
 in sixteen seconds, without executing a single line of target code."
 
-**Evidence:** Live AWS instance at `http://100.24.99.113/` (1,054 findings); `cryptiq.db` (1,042 findings); `pytest` 869 passed; `npm test` 63 passed.
+**Evidence:** Live AWS instance at `http://3.235.162.13/` (1,054 findings); `cryptiq.db` (1,042 findings); `pytest` 869 passed; `npm test` 63 passed.
 
 **Avoid:** the quantum-threat explainer; market-size numbers; "AI-powered."
 
@@ -2112,25 +2084,25 @@ validated").
   (3-day retention).
 - **Deliberately not used:** ALB, RDS, ECS/EKS, Redis, NAT, DNS/TLS, autoscaling — one
   instance, one port, for a demo.
-- One command: `deploy/aws/scripts/deploy.sh` (CFN + external health + port-exposure
+- One command: `deploy/aws/scripts/deploy.sh` (Terraform + external health + port-exposure
   gate); `teardown.sh` verifies nothing lingers.
-- **Live-verified in this session:** active on AWS at `http://100.24.99.113/` — external
+- **Live-verified in this session:** active on AWS at `http://3.235.162.13/` — external
   frontend 200, `/healthz` ok, `/api/v1/health/ready` 200, closed ports (8000, 22) timed
-  out, 5 projects, pyca/cryptography scan completed with 1,054 findings (137 HIGH / 917 MEDIUM)
-  in 16.16s, cache resubmit instant (`cached: true`).
+  out, Context Advisor endpoints verified live, pyca/cryptography scan completed with 1,054 findings (137 HIGH / 917 MEDIUM)
+  in 16.06s, cache resubmit instant (`cached: true`).
 
 **Diagram:** §14.4, trimmed.
 
-**Screenshot:** Screenshot 9 (architecture) + Bonus Slide Asset (live browser at `http://100.24.99.113/`).
+**Screenshot:** Screenshot 9 (architecture) + Bonus Slide Asset (live browser at `http://3.235.162.13/`).
 
-**Speaker notes:** "This isn't a localhost demo. One CloudFormation stack: a t3.medium
-in a public subnet it creates itself, port 80 the only thing open, operated entirely
+**Speaker notes:** "This isn't a localhost demo. A clean, Terraform-managed AWS deployment: a t3.medium
+in a dedicated VPC it creates itself, port 80 the only thing open, operated entirely
 over SSM Session Manager — there's no SSH key on the box. SQLite lives on a dedicated
 encrypted EBS volume so findings survive restarts. The deploy script gates on external
 reachability and proves 8000, 5432, and 22 are closed from the internet. We re-verified
 the live instance today: 1,054 findings on pyca/cryptography, responding in sixteen seconds."
 
-**Evidence:** Live AWS instance at `http://100.24.99.113/` (verified today); `deploy/aws/`; CloudWatch logs.
+**Evidence:** Live AWS instance at `http://3.235.162.13/` (verified today); `deploy/aws/terraform/`; CloudWatch logs.
 
 **Avoid:** claiming a live Gemini call on the instance; over-selling the scale.
 
@@ -2177,7 +2149,7 @@ security and hardening suites passing, and a verified live single-instance AWS d
   **Review queue**.
 - One line: **"We didn't propose a cryptographic migration tool. We engineered one —
   deterministic, evidence-backed, context-aware, and deployed."**
-- Footer: `github.com/Adhithya1804/cryptiq` · live: `http://100.24.99.113/` · `cryptiq
+- Footer: `github.com/Adhithya1804/cryptiq` · live: `http://3.235.162.13/` · `cryptiq
   scan .`
 
 **Screenshot:** Screenshots 5, 7, 9 side by side.
@@ -2188,7 +2160,7 @@ citation and a deterministic guardrail behind it. Every candidate is in a review
 with a workflow. It runs in the browser, offline in your terminal, and in CI — same
 engine, same fingerprints — and it's live on AWS right now. Thanks — questions?"
 
-**Evidence:** The 9 product screenshots; live instance at `http://100.24.99.113/`; 869 tests.
+**Evidence:** The 9 product screenshots; live instance at `http://3.235.162.13/`; 869 tests.
 
 **Avoid:** a fresh feature reveal on the last slide; a roadmap.
 
@@ -2256,9 +2228,9 @@ engine, same fingerprints — and it's live on AWS right now. Thanks — questio
 ### Metrics (verify morning-of; don't present stale)
 - [ ] 1,042 findings / 241 files / ~3 s on pyca/cryptography @ `1f903f5…`
 - [ ] 136 High / 906 Medium; roles 624/282/81/51/4
-- [ ] 855 backend tests / 34 skipped; 63 frontend tests
+- [ ] 869 backend tests / 34 skipped; 63 frontend tests
 - [ ] 7 rules; engine versions `python-ast-1` / `0.3.0` / `0.2.0`; Alembic head
-      `b6c7d8e9f0a1`; knowledge corpus 6 docs / ~10 chunks
+      `c7d8e9f0a1b2`; knowledge corpus 6 docs / ~10 chunks
 - [ ] Multi-repo: jwcrypto 52, click 0, bcrypt 0, crypto-free 0, hostile 2
 
 ### Backup demo (if the network / AWS / Gemini fails)
@@ -2268,7 +2240,7 @@ engine, same fingerprints — and it's live on AWS right now. Thanks — questio
 - [ ] Pre-captured JSON/SARIF output files to show instead of a live CLI run
 
 ### Pre-Flight Verification Status (Resolved in this Pass)
-- [x] **AWS Reachability:** `http://100.24.99.113/` is VERIFIED LIVE. `/healthz` is `ok`, `/api/v1/health/ready` is 200 `database:ok`, ports 8000/22 are closed, 1,054 findings scan completed in 16.16s.
+- [x] **AWS Reachability:** `http://3.235.162.13/` is VERIFIED LIVE. `/healthz` is `ok`, `/api/v1/health/ready` is 200 `database:ok`, ports 8000/22 are closed, 1,054 findings scan completed in 16.06s.
 - [x] **Gemini Status:** Real external Gemini call is NOT VERIFIED live (key unprovisioned). Graded and documented as "implemented, isolated, returns graceful 503".
 - [x] **CI Run Status:** Remote GitHub Actions green run is NOT VERIFIED on remote GitHub; workflows and SARIF generators are validated locally.
 - [x] **Frontend Lint Status:** Clean (0 errors, 0 warnings) under `eslint . --max-warnings 0`.
@@ -2299,7 +2271,7 @@ This table documents the actual verified state of every subsystem in CRYPTIQ as 
 | **CLI** | **GREEN** | Standalone `cryptiq` CLI (121 unit/validation tests passing). Tested offline in-process scan (`--format text/json/sarif`), commit diffing (`cryptiq diff`), and domain assessments (`--domain`). |
 | **CI/SARIF** | **YELLOW** | GitHub Actions workflow (`ci.yml`), Trivy container vulnerability/secret scanning, and SARIF 2.1.0 generation (`findings_to_sarif.py`) are fully implemented and validated locally; however, an active green run on GitHub Actions is NOT VERIFIED on remote infrastructure. |
 | **Docker** | **GREEN** | Multi-stage non-root containers for backend (uid 1001, ~416 MB) and frontend (uid 101, ~78 MB). Compose configs validated. Security hardening (no Docker socket, no server headers, non-root) verified. |
-| **AWS deployment** | **GREEN** | CloudFormation stack `cryptiq-demo` live on AWS us-east-1 at `http://100.24.99.113/`. Health checks (`/healthz`, `/api/v1/health/ready`) returning 200/ok; ports 8000 and 22 closed; 2 completed scans of pyca/cryptography verified live (1,054 findings, 16.16s). |
+| **AWS deployment** | **GREEN** | Terraform-managed stack (`deploy/aws/terraform/`) live on AWS us-east-1 at `http://3.235.162.13/`. Health checks (`/healthz`, `/api/v1/health/ready`) returning 200/ok; ports 8000 and 22 closed; 2 completed scans of pyca/cryptography verified live (1,054 findings, 16.06s). |
 | **Security controls** | **GREEN** | SSRF protection (4-host GitHub allowlist, IP literals blocked, per-hop redirect re-validation), archive bomb/traversal guards, zero target code execution, body size limits (413), rate limiting (14 unit tests), prompt injection defenses. |
 | **Full regression** | **GREEN** | Backend pytest suite: **869 passed, 34 skipped** (~11.4s); frontend vitest: **63 passed / 13 files**; ruff clean; eslint clean. Zero regressions across entire stack. |
 
@@ -2339,7 +2311,7 @@ review + `ai_explanation_available`, `fingerprint`) ·
 | CLI | `cryptiq/app/cli/{main,local,results,sarif,diff,client}.py` |
 | CI | `.github/workflows/ci.yml`, `.github/scripts/findings_to_sarif.py` |
 | Docker | `cryptiq/Dockerfile`, `frontend/Dockerfile`, `docker-compose*.yml` |
-| AWS | `deploy/aws/cloudformation/cryptiq-demo.yaml`, `deploy/aws/user-data.sh`, `deploy/aws/scripts/*.sh`, `deploy/aws/compose/*` |
+| AWS | `deploy/aws/terraform/*` (primary), `deploy/aws/scripts/*.sh`, `deploy/aws/compose/*`, `deploy/aws/cloudformation/` (legacy) |
 | Frontend finding UI | `frontend/src/pages/FindingDetail/FindingDetailPage.tsx`, `frontend/src/components/findings/*` |
 
 

@@ -3,8 +3,7 @@
  * (Cryptiq.dc.html). These are the single source of truth for colour, type,
  * spacing and motion. Do not introduce ad-hoc values elsewhere in the codebase.
  *
- * The product is a single committed dark theme (Settings › Appearance › Theme is
- * "Dark", read-only), so there is no light palette to mirror.
+ * The product is a single committed dark theme, so there is no light palette to mirror.
  */
 
 :root {

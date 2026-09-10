@@ -4,10 +4,8 @@ import { SegmentedControl } from '@/components/common/SegmentedControl';
 import { Toggle } from '@/components/common/Toggle';
 import { CheckBox } from '@/components/common/CheckBox';
 import { Button } from '@/components/common/Button';
-import { EmptyState } from '@/components/common/StateViews';
 import { useBreadcrumbs } from '@/components/layout/Breadcrumbs';
 import { useToast } from '@/app/providers/ToastProvider';
-import { usePreferences } from '@/app/providers/PreferencesProvider';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { isBackendConfigured } from '@/services';
 import {
@@ -16,33 +14,26 @@ import {
 } from '@/constants/navigation';
 import {
   ANALYSIS_TOGGLES,
-  AUDIT_COLUMNS,
-  AUDIT_FILTERS,
   COMING_SOON_INTEGRATIONS,
   COMMIT_OPTIONS,
-  DENSITY_OPTIONS,
   ENVIRONMENT_OPTIONS,
   FLAGGED_ALGORITHMS,
-  MOTION_OPTIONS,
   NOTIFICATION_EVENTS,
   POSTURE_OPTIONS,
-  ROLE_DESCRIPTIONS,
   SCOPE_OPTIONS,
-  SIDEBAR_OPTIONS,
   createDefaultSettings,
   type NotificationChannel,
   type SettingsFormState,
 } from './settingsOptions';
 import styles from './SettingsPage.module.css';
 
-const NO_SAVE_SECTIONS = new Set(['integrations', 'access', 'audit', 'danger']);
+const NO_SAVE_SECTIONS = new Set(['integrations', 'danger']);
 const VALID_SECTIONS = new Set(SETTINGS_SECTIONS.map((section) => section.id));
 
 export function SettingsPage() {
   const { section = DEFAULT_SETTINGS_SECTION } = useParams();
   const navigate = useNavigate();
   const { notify } = useToast();
-  const preferences = usePreferences();
 
   useDocumentTitle('Settings');
   useBreadcrumbs(() => [{ label: 'Settings' }], []);
@@ -63,8 +54,7 @@ export function SettingsPage() {
       <div className={styles.header}>
         <h1 className={styles.title}>Settings</h1>
         <p className={styles.description}>
-          Workspace-wide configuration, policy, and access. Repository-specific settings live on each
-          repository.
+          Workspace-wide configuration and policy. Repository-specific settings live on each repository.
         </p>
       </div>
 
@@ -88,11 +78,7 @@ export function SettingsPage() {
           {section === 'analysis' && <AnalysisSection form={form} update={update} />}
           {section === 'crypto' && <CryptoSection form={form} update={update} />}
           {section === 'integrations' && <IntegrationsSection onAction={notify} />}
-          {section === 'access' && <AccessSection onAction={notify} />}
           {section === 'notifications' && <NotificationsSection form={form} update={update} />}
-          {section === 'audit' && <AuditSection />}
-          {section === 'security' && <SecuritySection onAction={notify} />}
-          {section === 'appearance' && <AppearanceSection update={update} preferences={preferences} />}
           {section === 'danger' && <DangerSection onAction={notify} />}
 
           {showSave && (
@@ -275,6 +261,22 @@ function CryptoSection({ form, update }: { form: SettingsFormState; update: Upda
 
 function IntegrationsSection({ onAction }: { onAction: (message: string) => void }) {
   const connected = isBackendConfigured();
+  const [showCliInstructions, setShowCliInstructions] = useState(false);
+
+  const handleCopy = (text: string, message: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {
+        // clipboard access can be denied in unsupported environments
+      });
+    }
+    onAction(message);
+  };
+
+  const handleInstallCli = () => {
+    setShowCliInstructions((prev) => !prev);
+    handleCopy('pip install -e ".[dev]"', 'Copied CLI install command: pip install -e ".[dev]"');
+  };
+
   return (
     <>
       <h2 className={styles.sectionTitle}>Integrations</h2>
@@ -296,53 +298,112 @@ function IntegrationsSection({ onAction }: { onAction: (message: string) => void
           </div>
         </div>
         <div style={{ marginTop: 12 }}>
-          <Button size="xs" variant="secondary" onClick={() => onAction('GitHub connection is managed by your workspace administrator.')}>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => onAction('GitHub connection is managed by your workspace administrator.')}
+          >
             Manage connection
           </Button>
         </div>
       </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardHead}>
+          <div className={styles.cardTitle}>CI/CD</div>
+          <Button size="xs" variant="secondary" onClick={handleInstallCli}>
+            Install CLI
+          </Button>
+        </div>
+        <p className={styles.cardDescription}>
+          Install the CRYPTIQ CLI to run cryptographic analysis locally or integrate it into CI workflows.
+        </p>
+        <div className={styles.cardRows}>
+          <div className={styles.cardRow}>
+            <span>Execution mode</span>
+            <span>Local (offline) or Remote API</span>
+          </div>
+          <div className={styles.cardRow}>
+            <span>Package location</span>
+            <span className={styles.rowValueMono}>cryptiq/</span>
+          </div>
+          <div className={styles.cardRow}>
+            <span>Install command</span>
+            <span className={styles.rowValueMono}>pip install -e &quot;.[dev]&quot;</span>
+          </div>
+        </div>
+        {showCliInstructions && (
+          <div className={styles.cliInstructions}>
+            <div className={styles.cliInstructionsTitle}>Installation &amp; CI Usage</div>
+            <div className={styles.cliStep}>
+              <div className={styles.cliStepLabel}>1. Install CLI from repository package</div>
+              <div className={styles.commandBox}>
+                <code className={styles.commandCode}>pip install -e &quot;.[dev]&quot;</code>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => handleCopy('pip install -e ".[dev]"', 'Copied installation command')}
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+            <div className={styles.cliStep}>
+              <div className={styles.cliStepLabel}>2. Verify installation</div>
+              <div className={styles.commandBox}>
+                <code className={styles.commandCode}>cryptiq version</code>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => handleCopy('cryptiq version', 'Copied verify command')}
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+            <div className={styles.cliStep}>
+              <div className={styles.cliStepLabel}>3. CI Workflow — Local scan to SARIF</div>
+              <div className={styles.commandBox}>
+                <code className={styles.commandCode}>cryptiq scan . --format sarif &gt; cryptiq.sarif</code>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() =>
+                    handleCopy('cryptiq scan . --format sarif > cryptiq.sarif', 'Copied CI scan command')
+                  }
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+            <div className={styles.cliStep}>
+              <div className={styles.cliStepLabel}>4. CI Workflow — PR Diff Gating</div>
+              <div className={styles.commandBox}>
+                <code className={styles.commandCode}>cryptiq diff --base &quot;origin/${'{'}github.base_ref{'}'}&quot; --head HEAD</code>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() =>
+                    handleCopy(
+                      'cryptiq diff --base "origin/${{ github.base_ref }}" --head HEAD',
+                      'Copied PR diff gating command',
+                    )
+                  }
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {COMING_SOON_INTEGRATIONS.map((name) => (
         <div key={name} className={styles.comingSoonRow}>
           <span>{name}</span>
           <span className={styles.badgeNeutral}>Coming soon</span>
         </div>
       ))}
-    </>
-  );
-}
-
-function AccessSection({ onAction }: { onAction: (message: string) => void }) {
-  return (
-    <>
-      <div className={styles.row} style={{ marginBottom: 16 }}>
-        <h2 className={styles.sectionTitle} style={{ margin: 0 }}>
-          Access &amp; Roles
-        </h2>
-        <Button size="xs" variant="secondary" onClick={() => onAction('Inviting members requires a connected backend.')}>
-          Invite member
-        </Button>
-      </div>
-      <div style={{ marginBottom: 20 }}>
-        <EmptyState
-          kicker="Members"
-          title="No members to display"
-          description="Workspace members appear here once a backend is connected."
-        />
-      </div>
-      <div className={styles.rowLabel} style={{ marginBottom: 8 }}>
-        Roles
-      </div>
-      <div className={styles.stackList} style={{ fontSize: '12.5px', color: 'var(--text-2)' }}>
-        {ROLE_DESCRIPTIONS.map((role) => (
-          <div key={role.name}>
-            <span style={{ color: 'var(--text-1)', fontWeight: 600 }}>{role.name}</span> — {role.description}
-          </div>
-        ))}
-      </div>
-      <div className={styles.comingSoonRow} style={{ marginTop: 16 }}>
-        <span>SSO / SCIM provisioning</span>
-        <span className={styles.badgeNeutral}>Coming soon</span>
-      </div>
     </>
   );
 }
@@ -397,135 +458,6 @@ function NotificationsSection({ form, update }: { form: SettingsFormState; updat
           ))}
         </tbody>
       </table>
-    </>
-  );
-}
-
-function AuditSection() {
-  return (
-    <>
-      <h2 className={styles.sectionTitle}>Audit Log</h2>
-      <div className={styles.filterRow}>
-        {AUDIT_FILTERS.map((placeholder) => (
-          <input
-            key={placeholder}
-            className={styles.filterInput}
-            placeholder={placeholder}
-            aria-label={`Filter by ${placeholder}`}
-          />
-        ))}
-      </div>
-      <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
-            background: 'var(--surface-1)',
-            borderBottom: '1px solid var(--border-strong)',
-          }}
-        >
-          {AUDIT_COLUMNS.map((column) => (
-            <div
-              key={column}
-              style={{
-                padding: '9px 14px',
-                fontSize: 10.5,
-                color: 'var(--text-3)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-              }}
-            >
-              {column}
-            </div>
-          ))}
-        </div>
-        <div style={{ padding: '4px 14px' }}>
-          <EmptyState
-            kicker="Audit Log"
-            title="No audit events"
-            description="Workspace and analysis activity is recorded here once a backend is connected."
-          />
-        </div>
-      </div>
-    </>
-  );
-}
-
-function SecuritySection({ onAction }: { onAction: (message: string) => void }) {
-  return (
-    <>
-      <h2 className={styles.sectionTitle}>Security</h2>
-      <div className={styles.rows}>
-        <Row label="Session timeout">
-          <ReadOnlyValue>8 hours</ReadOnlyValue>
-        </Row>
-        <Row label="MFA status">
-          <span className={styles.badgePositive}>Enforced</span>
-        </Row>
-        <Row label="Active sessions">
-          <ReadOnlyValue>—</ReadOnlyValue>
-        </Row>
-        <Row label="API keys">
-          <Button size="xs" variant="secondary" onClick={() => onAction('API key management requires a connected backend.')}>
-            Manage
-          </Button>
-        </Row>
-        <Row label="Security events">
-          <ReadOnlyValue>—</ReadOnlyValue>
-        </Row>
-      </div>
-    </>
-  );
-}
-
-function AppearanceSection({
-  update,
-  preferences,
-}: {
-  update: Updater;
-  preferences: ReturnType<typeof usePreferences>;
-}) {
-  return (
-    <>
-      <h2 className={styles.sectionTitle}>Appearance</h2>
-      <div className={styles.rows}>
-        <Row label="Theme">
-          <ReadOnlyValue>Dark</ReadOnlyValue>
-        </Row>
-        <Row label="Density">
-          <SegmentedControl
-            legend="Density"
-            options={DENSITY_OPTIONS}
-            value={preferences.density}
-            onChange={(value) => {
-              preferences.setDensity(value);
-              update('density', value);
-            }}
-          />
-        </Row>
-        <Row label="Code font">
-          <ReadOnlyValue mono>IBM Plex Mono</ReadOnlyValue>
-        </Row>
-        <Row label="Motion">
-          <SegmentedControl
-            legend="Motion"
-            options={MOTION_OPTIONS}
-            value={preferences.motion}
-            onChange={(value) => {
-              preferences.setMotion(value);
-              update('motion', value);
-            }}
-          />
-        </Row>
-        <Row label="Sidebar behavior" hint="Auto-hide reveals the sidebar near the left edge.">
-          <SegmentedControl
-            legend="Sidebar behavior"
-            options={SIDEBAR_OPTIONS}
-            value={preferences.sidebarMode}
-            onChange={(value) => preferences.setSidebarMode(value)}
-          />
-        </Row>
-      </div>
     </>
   );
 }
