@@ -38,7 +38,13 @@ const STATUS_MESSAGES: Record<number, string> = {
 
 function buildUrl(path: string, query: RequestOptions['query']): string {
   const base = apiConfig.baseUrl;
-  const url = new URL(`${base}${path.startsWith('/') ? path : `/${path}`}`, base || window.location.origin);
+  const rel = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  // `base` can be absolute (dev: http://localhost:8000/api/v1), a same-origin
+  // path (deployed behind nginx: /api/v1), or empty (no backend). `new URL`
+  // rejects a non-absolute second argument, so only pass a base when the
+  // combined string isn't already absolute — otherwise resolve against the
+  // current origin.
+  const url = /^https?:\/\//i.test(rel) ? new URL(rel) : new URL(rel, window.location.origin);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined || value === null) continue;
