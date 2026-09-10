@@ -39,11 +39,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'analysis', label: 'Analysis' },
   { id: 'crypto', label: 'Cryptographic Policy' },
   { id: 'integrations', label: 'Integrations' },
-  { id: 'access', label: 'Access & Roles' },
   { id: 'notifications', label: 'Notifications' },
-  { id: 'audit', label: 'Audit Log' },
-  { id: 'security', label: 'Security' },
-  { id: 'appearance', label: 'Appearance' },
   { id: 'danger', label: 'Danger Zone', danger: true },
 ];
 

@@ -126,7 +126,7 @@ select {
   }
 }
 
-/* Explicit user override from Settings › Appearance › Motion. */
+/* Explicit user override for motion preference. */
 :root[data-motion='reduced'] *,
 :root[data-motion='reduced'] *::before,
 :root[data-motion='reduced'] *::after {

@@ -25,7 +25,7 @@ const oneOf = <T extends string>(list: readonly T[]) => (raw: string): T | null 
 
 /**
  * App-wide UI preferences (sidebar behaviour, motion, table density). Persisted
- * per-browser via localStorage and shared so Settings and the layout stay in
+ * per-browser via localStorage so UI preferences and the layout stay in
  * sync. These are conveniences, not data — a blank store just yields defaults.
  */
 export function PreferencesProvider({ children }: { children: ReactNode }) {

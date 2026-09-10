@@ -6,4 +6,12 @@ deploy/seed/*.db-shm
 deploy/seed/*.db-journal
 deploy/seed/*.sqlite3
 
+# Terraform local state and directories
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+
 .DS_Store

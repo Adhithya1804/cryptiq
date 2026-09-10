@@ -25,22 +25,6 @@ export const POSTURE_OPTIONS = [
   { value: 'strict', label: 'Strict' },
 ] as const;
 
-export const DENSITY_OPTIONS = [
-  { value: 'comfortable', label: 'Comfortable' },
-  { value: 'compact', label: 'Compact' },
-] as const;
-
-export const MOTION_OPTIONS = [
-  { value: 'full', label: 'Full' },
-  { value: 'reduced', label: 'Reduced' },
-] as const;
-
-export const SIDEBAR_OPTIONS = [
-  { value: 'expanded', label: 'Expanded' },
-  { value: 'collapsed', label: 'Collapsed' },
-  { value: 'auto', label: 'Auto-hide' },
-] as const;
-
 export const ANALYSIS_TOGGLES = [
   'Include generated code',
   'Include test code',
@@ -60,16 +44,7 @@ export const NOTIFICATION_EVENTS = [
 
 export type NotificationChannel = 'app' | 'email' | 'slack';
 
-export const COMING_SOON_INTEGRATIONS = ['GitLab', 'Bitbucket', 'Slack', 'Jira', 'CI/CD'] as const;
-
-export const ROLE_DESCRIPTIONS: { name: string; description: string }[] = [
-  { name: 'Owner', description: 'full workspace and billing control.' },
-  { name: 'Security Engineer', description: 'configures analysis and cryptographic policy.' },
-  { name: 'Reviewer', description: 'triages and resolves findings in Review.' },
-];
-
-export const AUDIT_FILTERS = ['Actor', 'Action', 'Repository', 'Date range'] as const;
-export const AUDIT_COLUMNS = ['Timestamp', 'Actor', 'Action', 'Repository', 'Object', 'Status'] as const;
+export const COMING_SOON_INTEGRATIONS = ['GitLab', 'Bitbucket', 'Slack', 'Jira'] as const;
 
 export interface SettingsFormState {
   organizationName: string;
@@ -80,8 +55,6 @@ export interface SettingsFormState {
   posture: string;
   flaggedAlgorithms: Record<string, boolean>;
   notifications: Record<string, Record<NotificationChannel, boolean>>;
-  density: string;
-  motion: string;
 }
 
 export function createDefaultSettings(): SettingsFormState {
@@ -111,7 +84,5 @@ export function createDefaultSettings(): SettingsFormState {
       'Inspection completed': { app: true, email: false, slack: false },
       'Inspection failed': { app: true, email: true, slack: true },
     },
-    density: 'comfortable',
-    motion: 'full',
   };
 }
