@@ -40,6 +40,28 @@ class Settings(BaseSettings):
     # release capacity immediately. Not a distributed rate limiter.
     max_in_flight_scans: int = 10
 
+    # --- Per-client rate limiting -------------------------------------------
+    # An in-process fixed-window limiter (app/rate_limit.py). It is the abuse
+    # ceiling for an unauthenticated single-instance demo: it caps scan
+    # flooding, Gemini-call amplification and cheap-GET floods without any
+    # external store (no Redis). Counters are per worker process; the AWS demo
+    # runs one backend process so that is the whole surface.
+    rate_limit_enabled: bool = True
+    rate_limit_window_seconds: int = 60
+    # Any request (the cheap-flood ceiling).
+    rate_limit_default_max: int = 240
+    # Any state-changing request (POST/PATCH) not classed as expensive.
+    rate_limit_write_max: int = 40
+    # The cost-amplifying endpoints: scan creation and the AI-backed
+    # explanation / migration-assessment routes (each can trigger a Gemini
+    # call or a full engine run).
+    rate_limit_expensive_max: int = 10
+    # Trust ``X-Forwarded-For`` for the client identity. Only enable when the
+    # app sits behind a proxy that always sets it (the AWS nginx does). When
+    # off, the socket peer address is used and forwarding headers are ignored,
+    # so an Internet client cannot spoof its identity to dodge the limiter.
+    trust_proxy_headers: bool = False
+
     # SQLite pragmas applied per connection for file-backed databases (the
     # AWS demo persists SQLite on an EBS volume). ``busy_timeout`` makes a
     # writer wait briefly for a competing write instead of failing immediately
@@ -86,11 +108,22 @@ class Settings(BaseSettings):
     pqc_ruleset_version: str = "0.2.0"
 
     @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() in {"production", "prod"}
+
+    @property
     def cors_origins(self) -> list[str]:
-        """The allow-origins list, parsed from the comma-separated setting."""
+        """The allow-origins list, parsed from the comma-separated setting.
+
+        A bare ``*`` is a local-only convenience and is refused under
+        ``ENVIRONMENT=production``: the AWS demo is same-origin (the SPA is
+        built with a relative API base behind one nginx), so a production
+        wildcard can only be a misconfiguration. It collapses to "no
+        cross-origin access" rather than opening the API to every site.
+        """
         raw = self.cors_allow_origins.strip()
         if raw == "*":
-            return ["*"]
+            return [] if self.is_production else ["*"]
         return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 

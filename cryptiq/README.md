@@ -121,6 +121,57 @@ Persistence, the scan API (`POST /scans` → `202` queued / `200` cached), the
 in-process worker, review items and the review queue are all implemented and
 exercised by the CLI and frontend.
 
+## Context-Aware Migration Advisor
+
+> *"CRYPTIQ does not equate cryptographic algorithm detection with migration advice."*
+
+The Context-Aware Migration Advisor evolves CRYPTIQ from pattern matching ("detect crypto → map to PQC") into semantic, context-aware architectural reasoning ("detect crypto → understand semantic role → understand application constraints → consult authoritative standards → produce context-aware migration assessment").
+
+### Three-Tier Epistemic Architecture
+
+CRYPTIQ enforces a strict epistemic hierarchy across three distinct tiers:
+
+1. **FACT (Deterministic Observation)**:
+   - Established strictly by the static analysis AST engine.
+   - Immutable: algorithm (`SHA-256`, `ECDSA`, `ECDH`), location, API, lines, source excerpt, fingerprint.
+   - Downstream models and advisors cannot modify, dispute, dismiss, or invent findings.
+
+2. **CONTEXT (Application Domain & Engineering Constraints)**:
+   - Application domain profiles (`AUTONOMOUS_DRONE`, `CLOUD_INFRASTRUCTURE`, `FINTECH`, `HEALTHCARE`, `GENERAL_SOFTWARE`).
+   - Physical and operational constraints: bandwidth limits, latency sensitivity, compute/memory restrictions, battery/power limits, payload size sensitivity, offline air-gapped operation.
+
+3. **RECOMMENDATION (Authoritative Guidance & Trade-offs)**:
+   - Advisory decisions: `KEEP`, `REVIEW`, `MIGRATE`, `INSUFFICIENT_CONTEXT`.
+   - Post-quantum migration candidates: `ML-KEM-768` (NIST FIPS 203), `ML-DSA-65` (NIST FIPS 204), `SLH-DSA` (NIST FIPS 205).
+   - In-process RAG knowledge retrieval: BM25 matching against authoritative NIST standards (FIPS 203/204/205, SP 800-131A, SP 800-107) and avionics literature.
+   - Concrete engineering trade-offs (e.g., lattice signature expansion from 64B to ~3.3 KB and telemetry bandwidth impact).
+   - Semantic guardrails: Hard deterministic invariants preventing category errors (e.g. attempting to map hash deduplication to ML-DSA or digital signatures to ML-KEM).
+
+### Concrete Scenario Comparison
+
+| Scenario | Detected Cryptography | Contextual Role | Domain Context | Advisor Decision | Migration Candidate | Engineering Trade-offs & Rationale |
+|---|---|---|---|---|---|---|
+| **Map Tile Deduplication** (`tile_cache.py:142`) | SHA-256 (`hashes.SHA256`) | `CONTENT_ADDRESSING` | Autonomous Drone (embedded Linux, low bandwidth) | **KEEP** | *None* | Zero signature size overhead. SHA-256 remains collision-resistant under Grover's algorithm (128-bit security). Mapping to ML-DSA is a category error. |
+| **Firmware Update Verification** (`verifier.py:28`) | ECDSA (`ec.ECDSA`) | `FIRMWARE_SIGNING` | Autonomous Drone (lossy telemetry radio) | **MIGRATE** | `ML-DSA-65` (FIPS 204) | ECDSA is quantum-vulnerable. Migration to ML-DSA-65 incurs signature expansion (64B → ~3.3 KB), affecting telemetry payload limits. |
+| **Ground Link Key Agreement** (`channel.py:15`) | ECDH (`ec.ECDH`) | `KEY_ESTABLISHMENT` | Cloud Infrastructure | **MIGRATE** | `ML-KEM-768` (FIPS 203) | Vulnerable to Shor's algorithm. Must migrate to a post-quantum Key Encapsulation Mechanism (ML-KEM), *never* a digital signature scheme. |
+
+### CLI Usage
+
+```bash
+# Scan local repository with domain profile context
+cryptiq scan . --domain autonomous-drone
+cryptiq scan . --domain cloud-infrastructure --format json
+cryptiq scan . --domain fintech --format sarif
+
+# Inspect single finding with contextual advice
+cryptiq finding <finding_id> --domain autonomous-drone
+```
+
+### API Endpoints
+
+- `POST /api/v1/findings/{finding_id}/migration-assessment`: Generate (or return cached) contextual migration assessment. Accepts optional `domain_profile` in request body.
+- `GET /api/v1/findings/{finding_id}/migration-assessment?domain=AUTONOMOUS_DRONE`: Retrieve assessment for a finding under a specified domain.
+
 AI explanation: `POST /findings/{id}/explanation` (with a `GET` alias) generates
 a bounded, structured natural-language explanation of an **already-established**
 finding through Gemini, cached per `finding fingerprint + prompt version +

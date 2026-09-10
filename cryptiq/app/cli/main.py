@@ -179,7 +179,7 @@ def _scan_local(args: argparse.Namespace, commit: str | None) -> int:
             from app.engine.context.models import DomainProfile
             from app.services.context_advisor import ContextAdvisorService
 
-            domain_profile = DomainProfile(domain=domain_name.strip().upper())
+            domain_profile = DomainProfile.from_dict({"domain": domain_name.strip()})
             advisor = ContextAdvisorService()
 
         findings_list = []
@@ -526,7 +526,7 @@ def cmd_finding(client_factory: Callable[[str | None], CryptiqClient], args: arg
             try:
                 assessment = client.get_migration_assessment(args.finding_id, domain=domain)
                 finding["contextual_assessment"] = assessment
-            except Exception:
+            except CliError:
                 pass
     if args.json:
         _print_json(finding)

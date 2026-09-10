@@ -16,9 +16,8 @@ import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
-from app.config import get_settings
 from app.db.models.finding import Finding
 from app.db.models.scan import Scan
 from app.engine.context.extractor import extract_context
@@ -32,7 +31,6 @@ from app.engine.context.models import (
     DomainProfile,
     ExtractedContext,
 )
-from app.engine.knowledge.corpus import KNOWLEDGE_BASE_VERSION
 from app.engine.knowledge.models import KnowledgeResult
 from app.engine.knowledge.retriever import InMemoryKnowledgeRetriever, KnowledgeRetriever
 from app.integrations.gemini import GeminiClient, GeminiError
@@ -184,8 +182,8 @@ class ContextAdvisorService:
     def assess_facts(
         self,
         *,
-        finding_id: str | None,
-        fingerprint: str,
+        finding_id: str | None = None,
+        fingerprint: str = "",
         algorithm: str,
         api: str,
         primitive: str,
@@ -193,12 +191,12 @@ class ContextAdvisorService:
         operation: str,
         file_path: str,
         start_line: int,
-        end_line: int | None,
+        end_line: int | None = None,
         deterministic_role: str,
         deterministic_confidence: str,
-        enclosing_function: str | None,
-        enclosing_class: str | None,
-        source_excerpt: str,
+        enclosing_function: str | None = None,
+        enclosing_class: str | None = None,
+        source_excerpt: str = "",
         domain_profile: DomainProfile | None = None,
         force_heuristic: bool = False,
     ) -> ContextualAssessment:
@@ -244,7 +242,7 @@ class ContextAdvisorService:
                     knowledge=knowledge_dicts,
                     source_excerpt=bounded_excerpt,
                 )
-            except (GeminiError, Exception) as exc:
+            except (GeminiError, Exception) as exc:  # noqa: BLE001
                 logger.warning(
                     "Gemini advisor failed for finding %s (%s); falling back to heuristic advisor",
                     finding_id,
@@ -443,6 +441,7 @@ class ContextAdvisorService:
         finding_id: str | None,
         fingerprint: str,
         algorithm: str,
+        deterministic_role: str = "UNKNOWN",
         extracted: ExtractedContext,
         domain_profile: DomainProfile,
         knowledge_dicts: list[dict[str, Any]],
@@ -452,7 +451,7 @@ class ContextAdvisorService:
         role = extracted.inferred_role_candidate
         if role == ContextualRole.UNKNOWN:
             # Fall back to mapping deterministic role
-            det_role = finding.role.value.upper()
+            det_role = deterministic_role.upper()
             if det_role == "HASH":
                 role = ContextualRole.HASHING
             elif det_role == "DIGITAL_SIGNATURE":

@@ -3,11 +3,25 @@
  * recording a review disposition.
  */
 
-import type { Finding, FindingExplanation, FindingReview, FindingReviewStatus } from '@/types/domain';
-import type { ApiExplanationDto, ApiFindingDto, ApiReviewBlock, SubmitReviewRequest } from '@/types/api';
+import type {
+  ContextualAssessment,
+  Finding,
+  FindingExplanation,
+  FindingReview,
+  FindingReviewStatus,
+} from '@/types/domain';
+import type {
+  ApiContextualAssessmentDto,
+  ApiDomainProfileDto,
+  ApiExplanationDto,
+  ApiFindingDto,
+  ApiReviewBlock,
+  CreateMigrationAssessmentRequest,
+  SubmitReviewRequest,
+} from '@/types/api';
 import { assertBackendConfigured } from './config';
 import { request } from './http';
-import { mapExplanation, mapFinding, toReviewStatus } from './mappers';
+import { mapContextualAssessment, mapExplanation, mapFinding, toReviewStatus } from './mappers';
 
 export async function fetchFinding(findingId: string, signal?: AbortSignal): Promise<Finding> {
   assertBackendConfigured();
@@ -36,6 +50,31 @@ export async function fetchFindingExplanation(
     { method: 'POST', ...(signal ? { signal } : {}) },
   );
   return mapExplanation(body);
+}
+
+/**
+ * Request the context-aware migration assessment for a finding.
+ * Evaluates semantic role, application/domain context, and authoritative
+ * cryptographic standards (NIST FIPS 203/204/205, SP 800-131A).
+ */
+export async function fetchMigrationAssessment(
+  findingId: string,
+  domainProfile?: ApiDomainProfileDto,
+  signal?: AbortSignal,
+): Promise<ContextualAssessment> {
+  assertBackendConfigured();
+  const payload: CreateMigrationAssessmentRequest = domainProfile
+    ? { domain_profile: domainProfile }
+    : {};
+  const body = await request<ApiContextualAssessmentDto>(
+    `/findings/${encodeURIComponent(findingId)}/migration-assessment`,
+    {
+      method: 'POST',
+      body: payload,
+      ...(signal ? { signal } : {}),
+    },
+  );
+  return mapContextualAssessment(body);
 }
 
 const WIRE_STATUS: Record<FindingReviewStatus, string> = {

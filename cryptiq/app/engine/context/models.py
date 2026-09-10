@@ -69,6 +69,45 @@ class ConstraintLevel(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+_MAX_TAG_CHARS = 120
+_MAX_TAGS = 20
+_MAX_DOMAIN_CHARS = 64
+_LIST_FIELDS = (
+    "regulatory_requirements",
+    "platform_constraints",
+    "interoperability_constraints",
+)
+_TEXT_FIELDS = (
+    "latency_sensitivity",
+    "bandwidth_constraint",
+    "compute_constraint",
+    "memory_constraint",
+    "battery_constraint",
+    "payload_size_sensitivity",
+    "signature_frequency",
+    "verification_frequency",
+    "data_longevity",
+)
+
+
+def _clamp_profile_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of ``data`` with every free-text field length-bounded."""
+    out = dict(data)
+    if "domain" in out and out["domain"] is not None:
+        out["domain"] = str(out["domain"])[:_MAX_DOMAIN_CHARS]
+    for field_name in _TEXT_FIELDS:
+        value = out.get(field_name)
+        if isinstance(value, str):
+            out[field_name] = value[:_MAX_TAG_CHARS]
+    for field_name in _LIST_FIELDS:
+        value = out.get(field_name)
+        if isinstance(value, (list, tuple)):
+            out[field_name] = [
+                str(item)[:_MAX_TAG_CHARS] for item in list(value)[:_MAX_TAGS]
+            ]
+    return out
+
+
 @dataclass(frozen=True)
 class DomainProfile:
     """Application and engineering constraints surrounding the repository."""
@@ -114,32 +153,84 @@ class DomainProfile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DomainProfile:
-        """Construct a DomainProfile safely from dictionary."""
-        def _to_level(val: Any) -> ConstraintLevel:
+        """Construct a DomainProfile safely from dictionary, inheriting preset defaults.
+
+        Free-text fields are clamped here as well as at the API schema, so a
+        caller that reaches this without Pydantic validation (the CLI, an
+        internal call) still cannot produce an unbounded profile -- it is
+        forwarded into the migration-assessment prompt and forms a cache key.
+        """
+        data = _clamp_profile_data(data)
+        domain_name = str(data.get("domain", "GENERAL_SOFTWARE")).upper().replace("-", "_")
+        base: DomainProfile | None = None
+        if domain_name == "AUTONOMOUS_DRONE":
+            base = cls.autonomous_drone()
+        elif domain_name == "CLOUD_INFRASTRUCTURE":
+            base = cls.cloud_infrastructure()
+        elif domain_name == "FINTECH":
+            base = cls.fintech()
+
+        def _to_level(val: Any, default: ConstraintLevel) -> ConstraintLevel:
             if isinstance(val, ConstraintLevel):
-                return val
-            if isinstance(val, str):
+                if val != ConstraintLevel.UNKNOWN or default == ConstraintLevel.UNKNOWN:
+                    return val
+                return default
+            if isinstance(val, str) and val.strip():
                 try:
-                    return ConstraintLevel(val.upper())
+                    lvl = ConstraintLevel(val.upper())
+                    if lvl != ConstraintLevel.UNKNOWN or default == ConstraintLevel.UNKNOWN:
+                        return lvl
                 except ValueError:
                     pass
-            return ConstraintLevel.UNKNOWN
+            return default
+
+        base_latency = base.latency_sensitivity if base else ConstraintLevel.UNKNOWN
+        base_bw = base.bandwidth_constraint if base else ConstraintLevel.UNKNOWN
+        base_compute = base.compute_constraint if base else ConstraintLevel.UNKNOWN
+        base_mem = base.memory_constraint if base else ConstraintLevel.UNKNOWN
+        base_battery = base.battery_constraint if base else ConstraintLevel.UNKNOWN
+        base_payload = base.payload_size_sensitivity if base else ConstraintLevel.UNKNOWN
 
         return cls(
-            domain=str(data.get("domain", "GENERAL_SOFTWARE")).upper(),
-            latency_sensitivity=_to_level(data.get("latency_sensitivity")),
-            bandwidth_constraint=_to_level(data.get("bandwidth_constraint")),
-            compute_constraint=_to_level(data.get("compute_constraint")),
-            memory_constraint=_to_level(data.get("memory_constraint")),
-            battery_constraint=_to_level(data.get("battery_constraint")),
-            offline_operation=data.get("offline_operation"),
-            signature_frequency=data.get("signature_frequency"),
-            verification_frequency=data.get("verification_frequency"),
-            payload_size_sensitivity=_to_level(data.get("payload_size_sensitivity")),
-            data_longevity=data.get("data_longevity"),
-            regulatory_requirements=tuple(data.get("regulatory_requirements") or ()),
-            platform_constraints=tuple(data.get("platform_constraints") or ()),
-            interoperability_constraints=tuple(data.get("interoperability_constraints") or ()),
+            domain=domain_name,
+            latency_sensitivity=_to_level(data.get("latency_sensitivity"), base_latency)
+            if data.get("latency_sensitivity") is not None
+            else base_latency,
+            bandwidth_constraint=_to_level(data.get("bandwidth_constraint"), base_bw)
+            if data.get("bandwidth_constraint") is not None
+            else base_bw,
+            compute_constraint=_to_level(data.get("compute_constraint"), base_compute)
+            if data.get("compute_constraint") is not None
+            else base_compute,
+            memory_constraint=_to_level(data.get("memory_constraint"), base_mem)
+            if data.get("memory_constraint") is not None
+            else base_mem,
+            battery_constraint=_to_level(data.get("battery_constraint"), base_battery)
+            if data.get("battery_constraint") is not None
+            else base_battery,
+            offline_operation=data["offline_operation"]
+            if "offline_operation" in data and data["offline_operation"] is not None
+            else (base.offline_operation if base else None),
+            signature_frequency=data.get("signature_frequency")
+            or (base.signature_frequency if base else None),
+            verification_frequency=data.get("verification_frequency")
+            or (base.verification_frequency if base else None),
+            payload_size_sensitivity=_to_level(data.get("payload_size_sensitivity"), base_payload)
+            if data.get("payload_size_sensitivity") is not None
+            else base_payload,
+            data_longevity=data.get("data_longevity")
+            or (base.data_longevity if base else None),
+            regulatory_requirements=tuple(
+                data.get("regulatory_requirements")
+                or (base.regulatory_requirements if base else ())
+            ),
+            platform_constraints=tuple(
+                data.get("platform_constraints") or (base.platform_constraints if base else ())
+            ),
+            interoperability_constraints=tuple(
+                data.get("interoperability_constraints")
+                or (base.interoperability_constraints if base else ())
+            ),
         )
 
     @classmethod

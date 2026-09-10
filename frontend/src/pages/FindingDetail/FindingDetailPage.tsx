@@ -9,6 +9,7 @@ import { EpistemicBadge } from '@/components/findings/EpistemicBadge';
 import { SourceEvidence } from '@/components/findings/SourceEvidence';
 import { ImpactChain } from '@/components/findings/ImpactChain';
 import { ReviewPathCard } from '@/components/findings/ReviewPathCard';
+import { MigrationAdvisorCard } from '@/components/findings/MigrationAdvisorCard';
 import { AiExplanation } from '@/components/findings/AiExplanation';
 import { useBreadcrumbs, type Crumb } from '@/components/layout/Breadcrumbs';
 import { useToast } from '@/app/providers/ToastProvider';
@@ -215,6 +216,7 @@ function FindingDetailView({ finding, mode, status, pending, onAction, onOpenInR
             <ReviewPathCard finding={finding} />
           </div>
 
+          <MigrationAdvisorCard finding={finding} />
           <AiExplanation finding={finding} />
         </div>
       </div>

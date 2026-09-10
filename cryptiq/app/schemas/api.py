@@ -11,7 +11,15 @@ or from a serialised engine result.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Field, StringConstraints
+
+# A short free-text constraint token (domain name, sensitivity label, a single
+# regulatory / platform / interoperability tag). Bounded so an unauthenticated
+# caller cannot pad the contextual-assessment request -- every one of these
+# strings is forwarded into the Gemini prompt.
+_ShortTag = Annotated[str, StringConstraints(max_length=120, strip_whitespace=True)]
 
 
 class ApiRepositoryRef(BaseModel):
@@ -224,22 +232,35 @@ class ApiExplanationDto(BaseModel):
 
 
 class ApiDomainProfileDto(BaseModel):
-    """Domain profile and engineering constraints."""
+    """Domain profile and engineering constraints.
 
-    domain: str = "GENERAL_SOFTWARE"
-    latency_sensitivity: str = "UNKNOWN"
-    bandwidth_constraint: str = "UNKNOWN"
-    compute_constraint: str = "UNKNOWN"
-    memory_constraint: str = "UNKNOWN"
-    battery_constraint: str = "UNKNOWN"
+    Client-supplied and entirely optional. Every field is length-bounded: the
+    profile is forwarded verbatim into the migration-assessment prompt, and a
+    distinct profile is a distinct cache key, so an unbounded profile would be
+    both a prompt-padding and a cache-busting lever on an unauthenticated
+    endpoint.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    domain: Annotated[str, StringConstraints(max_length=64, strip_whitespace=True)] = (
+        "GENERAL_SOFTWARE"
+    )
+    latency_sensitivity: _ShortTag = "UNKNOWN"
+    bandwidth_constraint: _ShortTag = "UNKNOWN"
+    compute_constraint: _ShortTag = "UNKNOWN"
+    memory_constraint: _ShortTag = "UNKNOWN"
+    battery_constraint: _ShortTag = "UNKNOWN"
     offline_operation: bool | None = None
-    signature_frequency: str | None = None
-    verification_frequency: str | None = None
-    payload_size_sensitivity: str = "UNKNOWN"
-    data_longevity: str | None = None
-    regulatory_requirements: list[str] = Field(default_factory=list)
-    platform_constraints: list[str] = Field(default_factory=list)
-    interoperability_constraints: list[str] = Field(default_factory=list)
+    signature_frequency: _ShortTag | None = None
+    verification_frequency: _ShortTag | None = None
+    payload_size_sensitivity: _ShortTag = "UNKNOWN"
+    data_longevity: _ShortTag | None = None
+    regulatory_requirements: list[_ShortTag] = Field(default_factory=list, max_length=20)
+    platform_constraints: list[_ShortTag] = Field(default_factory=list, max_length=20)
+    interoperability_constraints: list[_ShortTag] = Field(
+        default_factory=list, max_length=20
+    )
 
 
 class ApiKnowledgeSourceDto(BaseModel):

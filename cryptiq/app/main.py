@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.errors import register_error_handlers
 from app.logging_config import configure_logging
 from app.middleware import BodySizeLimitMiddleware
+from app.rate_limit import RateLimiter, RateLimitMiddleware
 from app.worker import worker_loop
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,21 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         **docs_kwargs,
     )
+    # Added first == innermost of the three. A 429 from the limiter still
+    # passes back out through CORSMiddleware, so the browser gets a readable
+    # response rather than an opaque network error.
+    if settings.rate_limit_enabled:
+        limiter = RateLimiter(
+            window_seconds=settings.rate_limit_window_seconds,
+            default_max=settings.rate_limit_default_max,
+            write_max=settings.rate_limit_write_max,
+            expensive_max=settings.rate_limit_expensive_max,
+        )
+        app.add_middleware(
+            RateLimitMiddleware,
+            limiter=limiter,
+            trust_proxy_headers=settings.trust_proxy_headers,
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

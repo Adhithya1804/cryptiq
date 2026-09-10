@@ -19,6 +19,7 @@ Responsibilities here (the Gemini call itself lives in
 from __future__ import annotations
 
 import logging
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -121,6 +122,14 @@ def generate_explanation(
 
     cached = _cached_explanation(session, finding, service)
     if cached is not None:
+        logger.info(
+            "gemini explanation outcome=cache_hit finding=%s fingerprint=%s "
+            "model=%s prompt_version=%s",
+            finding.id,
+            finding.fingerprint,
+            service.model,
+            service.prompt_version,
+        )
         return _to_dto(finding.id, cached, cached=True)
 
     _record_audit(
@@ -148,16 +157,29 @@ def generate_explanation(
         finding.id,
         service.model,
     )
+    started = time.monotonic()
     try:
         payload = service.explain(build_input(finding, scan))
     except GeminiError as exc:
+        latency_ms = int((time.monotonic() - started) * 1000)
         record.status = ExplanationStatus.FAILED
         record.error_code = _FAILURE_CODE
         record.error_message = str(exc)
         session.commit()
-        logger.warning("explanation for finding %s unavailable: %s", finding.id, exc)
+        # Only the exception class name is logged -- never its message, the
+        # request payload, or the API key.
+        logger.warning(
+            "gemini explanation outcome=failed finding=%s fingerprint=%s model=%s "
+            "prompt_version=%s latency_ms=%d error=%s",
+            finding.id,
+            finding.fingerprint,
+            service.model,
+            service.prompt_version,
+            latency_ms,
+            type(exc).__name__,
+        )
         raise ExplanationUnavailableError() from exc
-    logger.info("gemini explanation completed for finding %s", finding.id)
+    latency_ms = int((time.monotonic() - started) * 1000)
 
     record.status = ExplanationStatus.COMPLETED
     record.payload = payload.model_dump()
@@ -174,4 +196,13 @@ def generate_explanation(
     )
     session.commit()
     session.refresh(record)
+    logger.info(
+        "gemini explanation outcome=completed finding=%s fingerprint=%s model=%s "
+        "prompt_version=%s latency_ms=%d",
+        finding.id,
+        finding.fingerprint,
+        service.model,
+        service.prompt_version,
+        latency_ms,
+    )
     return _to_dto(finding.id, record, cached=False)

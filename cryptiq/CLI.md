@@ -97,6 +97,20 @@ it will read vendored code).
 A `--commit` scan never needs this: `git archive` only ever contains tracked
 files.
 
+### Context-Aware Scanning (`--domain`)
+
+Supply an application domain profile to produce context-aware migration assessments alongside deterministic findings:
+
+```bash
+cryptiq scan . --domain autonomous-drone
+cryptiq scan . --domain cloud-infrastructure
+cryptiq scan . --domain fintech
+cryptiq scan . --domain healthcare
+cryptiq scan . --domain general-software
+```
+
+Available presets configure latency sensitivity, bandwidth limits, memory, compute, battery, and platform constraints. When combined with `--format json` or `--format sarif`, the output includes the full `contextual_assessment` or `contextualAssessment` property.
+
 ---
 
 ## Git commits

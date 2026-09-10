@@ -34,3 +34,19 @@
   border: 1.5px dashed var(--blue);
   background: transparent;
 }
+
+.context {
+  color: var(--blue-solid);
+  border-color: color-mix(in srgb, var(--blue-solid) 45%, var(--border-strong));
+}
+.context .dot {
+  background: var(--blue-solid);
+}
+
+.recommendation {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border-strong));
+}
+.recommendation .dot {
+  background: var(--amber);
+}

@@ -131,3 +131,5 @@ class InMemoryKnowledgeRetriever:
             )
 
         return results
+
+    retrieve = search
