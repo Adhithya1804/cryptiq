@@ -5,14 +5,18 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.dependencies import DbSession
+from app.engine.context.models import DomainProfile
 from app.schemas.api import (
+    ApiContextualAssessmentDto,
     ApiExplanationDto,
     ApiFindingDto,
     ApiReviewBlock,
+    CreateMigrationAssessmentRequest,
     SubmitReviewRequest,
 )
 from app.services import scans
 from app.services.explanations import generate_explanation
+from app.services.migration_assessments import generate_migration_assessment
 from app.services.reviews import record_disposition
 from app.services.serialize import finding_dto, review_block
 
@@ -48,6 +52,36 @@ def get_finding_explanation(finding_id: str, session: DbSession) -> ApiExplanati
     finding = scans.get_finding(session, finding_id)
     scan = scans.get_scan(session, finding.scan_id)
     return generate_explanation(session, finding, scan)
+
+
+@router.post("/{finding_id}/migration-assessment", response_model=ApiContextualAssessmentDto)
+def create_finding_migration_assessment(
+    finding_id: str,
+    session: DbSession,
+    body: CreateMigrationAssessmentRequest | None = None,
+) -> ApiContextualAssessmentDto:
+    """Generate (or return cached) context-aware migration assessment for a finding."""
+    finding = scans.get_finding(session, finding_id)
+    scan = scans.get_scan(session, finding.scan_id)
+    profile = (
+        DomainProfile.from_dict(body.domain_profile.model_dump())
+        if body and body.domain_profile
+        else DomainProfile()
+    )
+    return generate_migration_assessment(session, finding, scan, domain_profile=profile)
+
+
+@router.get("/{finding_id}/migration-assessment", response_model=ApiContextualAssessmentDto)
+def get_finding_migration_assessment(
+    finding_id: str,
+    session: DbSession,
+    domain: str | None = None,
+) -> ApiContextualAssessmentDto:
+    """Retrieve or generate contextual migration assessment with optional domain filter."""
+    finding = scans.get_finding(session, finding_id)
+    scan = scans.get_scan(session, finding.scan_id)
+    profile = DomainProfile(domain=domain.upper()) if domain else DomainProfile()
+    return generate_migration_assessment(session, finding, scan, domain_profile=profile)
 
 
 @router.post("/{finding_id}/review", response_model=ApiReviewBlock)

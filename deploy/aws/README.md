@@ -4,11 +4,22 @@ A **temporary, single-instance** deployment of the existing Docker Compose
 stack. Not a production SaaS architecture — no Route 53, ALB, RDS, ECS/EKS,
 NAT Gateway, autoscaling, or multi-region. One EC2 instance, one public port.
 
+It deploys into a **clean AWS account with no VPC**: by default the stack
+creates the minimal networking it needs (`CreateNetwork=true`). If you already
+have networking, set `CreateNetwork=false` and pass `VPC_ID` / `SUBNET_ID`.
+
 ```
                        Internet
                           │  TCP 80 (only)
                           ▼
+                   Internet Gateway
+                          │
+                   public route table  (0.0.0.0/0 → IGW)
+                          │
         ┌─────────────────────────────────────────┐
+        │  VPC 10.20.0.0/16 · public subnet        │  ← created by the stack
+        │  (CreateNetwork=true), or your own       │     when CreateNetwork=true
+        ├─────────────────────────────────────────┤
         │  EC2 t3.medium · Amazon Linux 2023       │
         │                                         │
         │  nginx :80 (container)                   │
@@ -35,7 +46,7 @@ The backend and frontend container ports are **never published to the host**;
 
 | Path | Purpose |
 |---|---|
-| `cloudformation/cryptiq-demo.yaml` | The whole stack: EC2, 2× encrypted EBS, security group, IAM role + instance profile, 4 CloudWatch log groups. `cfn-lint` clean. |
+| `cloudformation/cryptiq-demo.yaml` | The whole stack: (optional) VPC + public subnet + Internet Gateway + route table, EC2, 2× encrypted EBS, security group, IAM role + instance profile, 4 CloudWatch log groups. `CreateNetwork=true` (default) builds the networking; `CreateNetwork=false` consumes `VpcId`/`SubnetId`. `cfn-lint` clean. |
 | `user-data.sh` | First-boot bootstrap: Docker + Compose plugin + CloudWatch agent, mount the data volume, pull secrets from SSM, `compose up`, health-gate. |
 | `compose/docker-compose.aws.yml` | Standalone Compose stack: adds the public `nginx :80`, drops all other published ports, builds the frontend with `VITE_API_BASE_URL=/api/v1`, runs the backend `production` profile, ships logs via `awslogs`. |
 | `compose/nginx.conf` | The `:80` reverse proxy. `client_max_body_size 1m`. |
@@ -62,10 +73,14 @@ The backend and frontend container ports are **never published to the host**;
   The instance `git clone`s `REPO_URL` at `REPO_REF` on first boot and runs
   `deploy/aws/user-data.sh` from the clone — uncommitted local changes are not
   deployed. A private repo would need a baked AMI (out of scope).
-* **A VPC with a public subnet.** The account's **default VPC** works and
-  `deploy.sh` auto-discovers it. If the account has no default VPC (or none at
-  all), pass `VPC_ID` and `SUBNET_ID` explicitly — the template consumes an
-  existing VPC/subnet, it does not create one.
+* **Networking — nothing required.** By default (`CREATE_NETWORK=true`) the
+  stack creates a minimal VPC (`10.20.0.0/16`), one public subnet
+  (`10.20.1.0/24`), an Internet Gateway and a route table — no NAT Gateway.
+  This is the reproducible path and works on an account with **no VPC at all**.
+  To reuse existing networking instead, set `CREATE_NETWORK=false` and pass
+  `VPC_ID` + `SUBNET_ID` (a public subnet); `deploy.sh` will also fall back to
+  the account's default VPC in that mode. A pre-existing VPC passed this way is
+  never modified or deleted by `teardown.sh`.
 
 ## Deploy
 
@@ -73,24 +88,29 @@ The backend and frontend container ports are **never published to the host**;
 # 1. (optional) store the Gemini key — skip entirely to run without AI explanations
 GEMINI_API_KEY=... deploy/aws/scripts/setup.sh
 
-# 2. create the stack and prove it is reachable from your machine
+# 2a. MODE 1 — clean account, stack builds the VPC/subnet/IGW (default)
 REPO_URL=https://github.com/<you>/<repo>.git \
 REPO_REF=<tag-or-branch> \
 AWS_REGION=us-east-1 \
 deploy/aws/scripts/deploy.sh
 
-# ...or, if the account has no default VPC:
+# 2b. MODE 2 — reuse existing networking
 REPO_URL=... REPO_REF=... AWS_REGION=us-east-1 \
-VPC_ID=vpc-xxxx SUBNET_ID=subnet-xxxx \
+CREATE_NETWORK=false VPC_ID=vpc-xxxx SUBNET_ID=subnet-xxxx \
 deploy/aws/scripts/deploy.sh
 ```
+
+`CREATE_NETWORK` defaults to `true`. In that mode `VPC_ID`/`SUBNET_ID` must be
+unset — the stack owns the networking and `teardown.sh` removes it. In
+`CREATE_NETWORK=false` mode the networking you supply (or the account default
+VPC) is used as-is and left untouched on teardown.
 
 `deploy.sh` prints the public URL, the SSM session command, and the log-tail
 command on success. Exit codes:
 
 | Code | Meaning |
 |---|---|
-| `2` | Missing prerequisite (`aws`/`curl`/template), no `REPO_URL`, bad `ALLOWED_CIDR`, or no VPC/subnet found — nothing created. |
+| `2` | Missing prerequisite (`aws`/`curl`/template), no `REPO_URL`, bad `ALLOWED_CIDR`/`CREATE_NETWORK`, or `CREATE_NETWORK=false` with no usable VPC/subnet — nothing created. |
 | `3` | `aws sts get-caller-identity` failed — credentials missing/expired/wrong region. Nothing created. |
 | `1` | Stack created but `http://<ip>/healthz`, `/api/v1/health`, `/api/v1/health/ready`, or `/` never came up, or `8000/5432/22` were reachable from outside. On a CloudFormation failure the last 25 stack events are printed. |
 
@@ -136,8 +156,9 @@ true` — this is a throwaway demo).
 | Data transfer out (demo traffic) | $0.09/GB | <$0.05 | <$0.20 |
 | **Total** | | **≈ $0.15** | **≈ $1.35** |
 
-No NAT Gateway, no ALB, no Elastic IP, no RDS. Comfortably inside ~$100 of
-credits. The only thing that runs up a bill is forgetting to tear down — so:
+No NAT Gateway, no ALB, no Elastic IP, no RDS. A VPC, subnet, Internet Gateway
+and route table are free. Comfortably inside ~$100 of credits. The only thing
+that runs up a bill is forgetting to tear down — so:
 
 ## Teardown
 
@@ -146,9 +167,17 @@ AWS_REGION=us-east-1 deploy/aws/scripts/teardown.sh
 ```
 
 Deletes the stack (EC2, both EBS volumes, security group, IAM role + instance
-profile, all four log groups) and the `/cryptiq/GEMINI_API_KEY` parameter, then
-verifies: stack `DELETE_COMPLETE`, no `cryptiq-demo` instances, no `/cryptiq/`
-log groups, no `/cryptiq/` SSM parameters. Exits non-zero if anything remains.
+profile, all four log groups, **and — when `CreatedNetwork=true` — the VPC,
+public subnet, Internet Gateway and route table this stack created**) plus the
+`/cryptiq/GEMINI_API_KEY` parameter, then verifies: stack `DELETE_COMPLETE`, no
+`cryptiq-demo` instances, no `/cryptiq/` log groups, no `/cryptiq/` SSM
+parameters, and the stack-created VPC is gone. Exits non-zero if anything
+remains.
+
+`teardown.sh` reads the stack's `CreatedNetwork` / `VpcId` outputs **before**
+deleting it. Networking is only ever touched when `CreatedNetwork=true` and only
+for that exact VPC id — a VPC supplied through `VPC_ID`/`SUBNET_ID`
+(`CreatedNetwork=false`) is left completely untouched.
 
 ## Emergency recovery
 

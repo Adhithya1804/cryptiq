@@ -53,7 +53,7 @@ jobs:
       - name: Ruff
         run: python -m ruff check .
       - name: Pytest
-        # Baseline: 761 passed, 34 skipped.
+        # Baseline: 825 passed, 34 skipped.
         run: python -m pytest -q
 
   frontend-quality:
@@ -75,7 +75,12 @@ jobs:
         run: npm run lint
       - name: Vitest
         # Baseline: 57 passed. `npm test` is `vitest run` (non-watch).
+        # The suite's "no backend connected" tests require an unset API base
+        # URL; the workflow-level VITE_API_BASE_URL exists only for the Vite
+        # build and the Docker image build, so clear it for the unit tests.
         run: npm test
+        env:
+          VITE_API_BASE_URL: ""
       - name: Vite build
         run: npm run build
 

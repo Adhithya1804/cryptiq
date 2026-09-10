@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from app.db.models.evidence import Evidence
     from app.db.models.explanation import Explanation
     from app.db.models.impact_node import ImpactNode
+    from app.db.models.migration_assessment import MigrationAssessmentRecord
     from app.db.models.review_item import ReviewItem
     from app.db.models.scan import Scan
 
@@ -80,6 +81,10 @@ class Finding(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         JSON, nullable=False, default=list
     )
     role_rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Why the rule fired (e.g. DIRECT_MODULE_API): the ``EvidenceBasis`` token
+    # from the RuleMatch, stored so the hosted API's inference block matches the
+    # in-process CLI. Nullable for rows written before this column existed.
+    evidence_basis: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[FindingStatus] = mapped_column(
         enum_column(FindingStatus, "finding_status"),
         nullable=False,
@@ -104,6 +109,11 @@ class Finding(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         passive_deletes=True,
     )
     explanations: Mapped[list["Explanation"]] = relationship(
+        back_populates="finding",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    migration_assessments: Mapped[list["MigrationAssessmentRecord"]] = relationship(
         back_populates="finding",
         cascade="all, delete-orphan",
         passive_deletes=True,

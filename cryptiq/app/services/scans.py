@@ -12,8 +12,10 @@ from collections import defaultdict
 from enum import StrEnum
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.config import get_settings
 from app.db.models.enums import (
     Confidence,
     CryptographicRole,
@@ -30,7 +32,7 @@ from app.db.models.scan_job import ScanJob
 from app.engine import engine_versions
 from app.engine.fingerprints import ScanIdentity
 from app.engine.ingestion.validation import normalize_commit_sha
-from app.errors import NotFoundError, ValidationError
+from app.errors import NotFoundError, TooManyScansError, ValidationError
 from app.integrations.github import parse_repository_url
 from app.services.scan_cache import find_completed_scan
 
@@ -52,26 +54,76 @@ def _parse_enum[E: StrEnum](enum_cls: type[E], raw: str, label: str) -> E:
 
 
 def _upsert_repository(session: Session, url: str) -> Repository:
-    """Return the stored repository for a URL, creating it on first sight."""
+    """Return the stored repository for a URL, creating it on first sight.
+
+    Two requests for a repository never seen before can both miss the initial
+    lookup and then both try to insert it; the unique constraint on
+    ``(provider, owner, name)`` lets exactly one win. The loser catches the
+    ``IntegrityError``, discards its own pending row inside the savepoint, and
+    re-reads the row the winner committed. Without this an unauthenticated
+    caller submitting a new repository twice at once gets a 500.
+    """
     reference = parse_repository_url(url)
-    existing = session.scalars(
-        select(Repository).where(
-            Repository.provider == reference.provider,
-            Repository.owner == reference.owner,
-            Repository.name == reference.name,
-        )
-    ).first()
+
+    def _lookup() -> Repository | None:
+        return session.scalars(
+            select(Repository).where(
+                Repository.provider == reference.provider,
+                Repository.owner == reference.owner,
+                Repository.name == reference.name,
+            )
+        ).first()
+
+    existing = _lookup()
     if existing is not None:
         return existing
+
     repository = Repository(
         provider=reference.provider,
         owner=reference.owner,
         name=reference.name,
         canonical_url=reference.canonical_url,
     )
-    session.add(repository)
-    session.flush()
+    try:
+        # Add and flush INSIDE the savepoint so a unique-constraint failure
+        # rolls back only this savepoint and leaves the request's transaction
+        # usable for the re-read below.
+        with session.begin_nested():
+            session.add(repository)
+            session.flush()
+    except IntegrityError:
+        raced = _lookup()
+        if raced is None:
+            raise
+        return raced
     return repository
+
+
+def _assert_in_flight_capacity(session: Session) -> None:
+    """Reject a new scan when too many are already QUEUED or RUNNING.
+
+    The demo endpoint is unauthenticated and one instance runs one worker, so
+    this bounded back-pressure keeps a burst of submissions from piling up
+    unboundedly. A scan leaves the count the moment it reaches COMPLETED or
+    FAILED, so finished and failed work both release capacity. Cache hits never
+    get here — they queue nothing.
+    """
+    limit = get_settings().max_in_flight_scans
+    in_flight = int(
+        session.scalar(
+            select(func.count())
+            .select_from(Scan)
+            .where(Scan.status.in_([ScanStatus.QUEUED, ScanStatus.RUNNING]))
+        )
+        or 0
+    )
+    if in_flight >= limit:
+        logger.warning(
+            "rejecting scan: %d in-flight >= limit %d", in_flight, limit
+        )
+        raise TooManyScansError(
+            "The analyzer is at capacity. Retry once running scans complete."
+        )
 
 
 def create_scan(
@@ -102,6 +154,8 @@ def create_scan(
     if cached is not None:
         logger.info("reusing completed scan %s for %s", cached.id, repository.name)
         return cached, True
+
+    _assert_in_flight_capacity(session)
 
     scan = Scan(
         repository_id=repository.id,

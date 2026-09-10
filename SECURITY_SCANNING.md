@@ -35,7 +35,7 @@ second `actions/checkout` with `repository:` + `path:` to assemble the tree.
 ```
 Pull request / push
    │
-   ├── backend-quality      ruff · pytest            (baseline 761 passed / 34 skipped)
+   ├── backend-quality      ruff · pytest            (baseline 825 passed / 34 skipped)
    ├── frontend-quality     tsc · eslint · vitest · vite build   (baseline 57 passed)
    │
    ├── docker-build         builds cryptiq-backend + cryptiq-frontend
@@ -242,8 +242,7 @@ python .github/scripts/findings_to_sarif.py \
 Validated locally on 2026-09-10:
 
 - `actionlint` clean on `ci.yml`.
-- Backend suite green (795 collected, 0 failures — matches 761/34 baseline);
-  `ruff` clean.
+- Backend suite green (825 passed / 34 skipped, 0 failures); `ruff` clean.
 - Frontend: `typecheck`, `lint` clean; `vitest` **57 passed**; `vite build` ok.
 - `docker compose config` and the Postgres override both parse.
 - Trivy 0.74.0 run against the real base images `python:3.12-slim-bookworm` and

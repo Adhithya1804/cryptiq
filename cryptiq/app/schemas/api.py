@@ -144,6 +144,10 @@ class ApiFindingDto(BaseModel):
 
     id: str
     scan_id: str
+    # The engine's stable, line-independent finding identity. Additive: lets a
+    # client (the CLI diff, SARIF fingerprints) track a finding across commits
+    # without re-deriving it.
+    fingerprint: str | None = None
     repository: ApiRepositoryRef
     commit_sha: str
     language: str = "Python"
@@ -219,6 +223,65 @@ class ApiExplanationDto(BaseModel):
     generated_at: str | None = None
 
 
+class ApiDomainProfileDto(BaseModel):
+    """Domain profile and engineering constraints."""
+
+    domain: str = "GENERAL_SOFTWARE"
+    latency_sensitivity: str = "UNKNOWN"
+    bandwidth_constraint: str = "UNKNOWN"
+    compute_constraint: str = "UNKNOWN"
+    memory_constraint: str = "UNKNOWN"
+    battery_constraint: str = "UNKNOWN"
+    offline_operation: bool | None = None
+    signature_frequency: str | None = None
+    verification_frequency: str | None = None
+    payload_size_sensitivity: str = "UNKNOWN"
+    data_longevity: str | None = None
+    regulatory_requirements: list[str] = Field(default_factory=list)
+    platform_constraints: list[str] = Field(default_factory=list)
+    interoperability_constraints: list[str] = Field(default_factory=list)
+
+
+class ApiKnowledgeSourceDto(BaseModel):
+    """An authoritative standards chunk citation."""
+
+    document_id: str
+    chunk_id: str
+    title: str
+    publisher: str
+    url: str
+    section: str
+    version: str
+    content: str
+    relevance_score: float = 0.0
+
+
+class ApiContextualAssessmentDto(BaseModel):
+    """The context-aware post-quantum migration evaluation of a finding."""
+
+    id: str | None = None
+    finding_id: str
+    fingerprint: str
+    assessment: str
+    confidence: str
+    contextual_role: str
+    rationale: str
+    pqc_migration_required: bool
+    migration_candidate: str | None = None
+    alternatives: list[str] = Field(default_factory=list)
+    engineering_tradeoffs: list[str] = Field(default_factory=list)
+    required_context: list[str] = Field(default_factory=list)
+    evidence_interpretation: str = ""
+    knowledge_sources: list[dict[str, Any]] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    domain_profile: dict[str, Any] = Field(default_factory=dict)
+    generated_by: str = "heuristic_advisor"
+    model: str | None = None
+    prompt_version: str | None = None
+    cached: bool = False
+    created_at: str | None = None
+
+
 class ApiListEnvelope[T](BaseModel):
     """The list wrapper every collection endpoint returns."""
 
@@ -269,3 +332,9 @@ class UpdateReviewItemRequest(BaseModel):
     status: str | None = None
     assigned_to: str | None = None
     note: str | None = None
+
+
+class CreateMigrationAssessmentRequest(BaseModel):
+    """Request payload for generating a contextual migration assessment."""
+
+    domain_profile: ApiDomainProfileDto | None = None

@@ -37,6 +37,25 @@ class ValidationError(CryptiqError):
     code = "validation_error"
 
 
+class RequestTooLargeError(CryptiqError):
+    """The request body exceeded the configured ceiling."""
+
+    status_code = 413
+    code = "REQUEST_TOO_LARGE"
+
+
+class TooManyScansError(CryptiqError):
+    """Too many scans are already QUEUED or RUNNING on this instance.
+
+    The demo endpoint is unauthenticated and runs a single in-process worker;
+    this is the bounded back-pressure that keeps it from being trivially
+    swamped. Capacity frees up as in-flight scans complete or fail.
+    """
+
+    status_code = 429
+    code = "TOO_MANY_SCANS"
+
+
 class IngestionError(CryptiqError):
     """Base class for failures while acquiring a source snapshot.
 

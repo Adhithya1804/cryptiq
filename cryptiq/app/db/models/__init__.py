@@ -11,6 +11,7 @@ from app.db.models.evidence import Evidence
 from app.db.models.explanation import Explanation
 from app.db.models.finding import Finding
 from app.db.models.impact_node import ImpactNode
+from app.db.models.migration_assessment import MigrationAssessmentRecord
 from app.db.models.repository import Repository
 from app.db.models.review_item import ReviewItem
 from app.db.models.scan import Scan
@@ -25,6 +26,7 @@ __all__ = [
     "Explanation",
     "Finding",
     "ImpactNode",
+    "MigrationAssessmentRecord",
     "Repository",
     "ReviewItem",
     "Scan",

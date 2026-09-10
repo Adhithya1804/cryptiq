@@ -567,7 +567,15 @@ def test_backend_unreachable_is_a_friendly_error(invoke) -> None:
     assert "Traceback" not in err
 
 
-def test_no_subcommand_is_a_usage_error(invoke) -> None:
+def test_no_subcommand_prints_help(invoke) -> None:
+    """Bare ``cryptiq`` is a landing screen, not a usage error."""
+    code, out, _err = invoke([], lambda _r: _json({}))
+    assert code == 0
+    assert "usage: cryptiq" in out
+    assert "scan" in out and "diff" in out
+
+
+def test_version_flag_prints_version(invoke) -> None:
     with pytest.raises(SystemExit) as exc:
-        invoke([], lambda _r: _json({}))
-    assert exc.value.code == 2
+        invoke(["--version"], lambda _r: _json({}))
+    assert exc.value.code == 0
