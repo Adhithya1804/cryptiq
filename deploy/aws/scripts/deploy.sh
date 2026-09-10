@@ -6,13 +6,18 @@
 #   deploy/aws/scripts/deploy.sh
 #
 # Optional env:
-#   STACK_NAME     (default cryptiq-demo)
-#   AWS_REGION     (default us-east-1)
-#   VPC_ID         (default: the account's default VPC)
-#   SUBNET_ID      (default: first public subnet of that VPC)
-#   INSTANCE_TYPE  (default t3.medium)
-#   ALLOWED_CIDR   (default 0.0.0.0/0)
-#   SKIP_HEALTH    (set to 1 to create the stack but not block on external health)
+#   STACK_NAME      (default cryptiq-demo)
+#   AWS_REGION      (default us-east-1)
+#   CREATE_NETWORK  (default true) — true: the stack builds a minimal VPC +
+#                   public subnet + Internet Gateway + route table, so this
+#                   works on an account with no VPC. false: reuse existing
+#                   networking; then VPC_ID + SUBNET_ID are required (or an
+#                   account default VPC is auto-discovered).
+#   VPC_ID          (CREATE_NETWORK=false only) existing VPC id
+#   SUBNET_ID       (CREATE_NETWORK=false only) existing PUBLIC subnet id
+#   INSTANCE_TYPE   (default t3.medium)
+#   ALLOWED_CIDR    (default 0.0.0.0/0)
+#   SKIP_HEALTH     (set to 1 to create the stack but not block on external health)
 #
 # Exits non-zero if a prerequisite is missing, if AWS credentials are invalid,
 # if the stack fails, OR if the external health / port-exposure checks fail.
@@ -25,6 +30,7 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-t3.medium}"
 ALLOWED_CIDR="${ALLOWED_CIDR:-0.0.0.0/0}"
 REPO_REF="${REPO_REF:-main}"
+CREATE_NETWORK="${CREATE_NETWORK:-true}"
 
 aws() { command aws --region "${REGION}" "$@"; }
 
@@ -39,6 +45,10 @@ done
 case "${ALLOWED_CIDR}" in
   */[0-9]|*/[0-9][0-9]) : ;;
   *) die "ALLOWED_CIDR must look like 1.2.3.4/32 (got '${ALLOWED_CIDR}')" ;;
+esac
+case "${CREATE_NETWORK}" in
+  true|false) : ;;
+  *) die "CREATE_NETWORK must be 'true' or 'false' (got '${CREATE_NETWORK}')" ;;
 esac
 
 cli_major="$(command aws --version 2>&1 | sed -n 's#^aws-cli/\([0-9]\).*#\1#p')"
@@ -68,23 +78,38 @@ account="$(printf '%s' "${caller}" | sed -n 's/.*"Account"[: ]*"\([0-9]*\)".*/\1
 arn="$(printf '%s' "${caller}" | sed -n 's/.*"Arn"[: ]*"\([^"]*\)".*/\1/p')"
 echo "deploy: authenticated — account ${account:-?} as ${arn:-?}"
 
-# --- 3. Resolve VPC / subnet --------------------------------------- #
-VPC_ID="${VPC_ID:-$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
-  --query 'Vpcs[0].VpcId' --output text)}"
-if [ "${VPC_ID}" = "None" ] || [ -z "${VPC_ID}" ]; then
-  die "no default VPC in ${REGION}; set VPC_ID and SUBNET_ID"
+# --- 3. Networking mode ------------------------------------------- #
+# MODE 1 (default) CREATE_NETWORK=true:  the CloudFormation stack builds a
+#   minimal VPC + public subnet + Internet Gateway + route table. Nothing to
+#   resolve here — this is what makes the deploy reproducible on a clean account
+#   with no VPC. VpcId/SubnetId are passed empty and the template ignores them.
+# MODE 2 CREATE_NETWORK=false:  reuse existing networking. Use VPC_ID/SUBNET_ID
+#   if given, else fall back to the account's default VPC + a public subnet.
+if [ "${CREATE_NETWORK}" = "true" ]; then
+  if [ -n "${VPC_ID:-}" ] || [ -n "${SUBNET_ID:-}" ]; then
+    die "CREATE_NETWORK=true builds its own VPC — unset VPC_ID/SUBNET_ID, or set CREATE_NETWORK=false to reuse them"
+  fi
+  VPC_ID=""
+  SUBNET_ID=""
+  echo "deploy: network mode=create (stack builds VPC + public subnet + IGW + route table)"
+else
+  VPC_ID="${VPC_ID:-$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+    --query 'Vpcs[0].VpcId' --output text 2>/dev/null || true)}"
+  if [ "${VPC_ID}" = "None" ] || [ -z "${VPC_ID}" ]; then
+    die "CREATE_NETWORK=false but no VPC_ID given and no default VPC in ${REGION} (use CREATE_NETWORK=true)"
+  fi
+  if [ -z "${SUBNET_ID:-}" ]; then
+    SUBNET_ID="$(aws ec2 describe-subnets \
+      --filters "Name=vpc-id,Values=${VPC_ID}" "Name=map-public-ip-on-launch,Values=true" \
+      --query 'Subnets[0].SubnetId' --output text 2>/dev/null || true)"
+  fi
+  if [ "${SUBNET_ID}" = "None" ] || [ -z "${SUBNET_ID}" ]; then
+    die "CREATE_NETWORK=false but no public subnet in ${VPC_ID}; set SUBNET_ID (use CREATE_NETWORK=true)"
+  fi
+  echo "deploy: network mode=existing vpc=${VPC_ID} subnet=${SUBNET_ID}"
 fi
 
-if [ -z "${SUBNET_ID:-}" ]; then
-  SUBNET_ID="$(aws ec2 describe-subnets \
-    --filters "Name=vpc-id,Values=${VPC_ID}" "Name=map-public-ip-on-launch,Values=true" \
-    --query 'Subnets[0].SubnetId' --output text)"
-fi
-if [ "${SUBNET_ID}" = "None" ] || [ -z "${SUBNET_ID}" ]; then
-  die "no public subnet in ${VPC_ID}; set SUBNET_ID"
-fi
-
-echo "deploy: stack=${STACK_NAME} region=${REGION} vpc=${VPC_ID} subnet=${SUBNET_ID}"
+echo "deploy: stack=${STACK_NAME} region=${REGION} create_network=${CREATE_NETWORK}"
 echo "deploy: repo=${REPO_URL}@${REPO_REF} instance=${INSTANCE_TYPE} cidr=${ALLOWED_CIDR}"
 
 # --- 4. Deploy ---------------------------------------------------- #
@@ -98,18 +123,27 @@ dump_events() {
 }
 trap 'rc=$?; [ "${rc}" -ne 0 ] && dump_events; exit "${rc}"' ERR
 
+# Build the parameter list. In create-network mode VpcId/SubnetId are left at
+# their template default ("") by not passing them; in existing-network mode both
+# are passed. `deploy` resets any unpassed parameter to its default, so this is
+# also correct when updating a stack across modes.
+params=(
+  CreateNetwork="${CREATE_NETWORK}"
+  InstanceType="${INSTANCE_TYPE}"
+  RepoUrl="${REPO_URL}"
+  RepoRef="${REPO_REF}"
+  AllowedCidr="${ALLOWED_CIDR}"
+)
+if [ "${CREATE_NETWORK}" = "false" ]; then
+  params+=(VpcId="${VPC_ID}" SubnetId="${SUBNET_ID}")
+fi
+
 aws cloudformation deploy \
   --stack-name "${STACK_NAME}" \
   --template-file "${TEMPLATE}" \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset \
-  --parameter-overrides \
-    VpcId="${VPC_ID}" \
-    SubnetId="${SUBNET_ID}" \
-    InstanceType="${INSTANCE_TYPE}" \
-    RepoUrl="${REPO_URL}" \
-    RepoRef="${REPO_REF}" \
-    AllowedCidr="${ALLOWED_CIDR}"
+  --parameter-overrides "${params[@]}"
 
 trap - ERR
 
@@ -117,7 +151,11 @@ PUBLIC_IP="$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" \
   --query "Stacks[0].Outputs[?OutputKey=='PublicIp'].OutputValue" --output text)"
 INSTANCE_ID="$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" \
   --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)"
-echo "deploy: instance ${INSTANCE_ID} at ${PUBLIC_IP}"
+STACK_VPC="$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" \
+  --query "Stacks[0].Outputs[?OutputKey=='VpcId'].OutputValue" --output text)"
+CREATED_NET="$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" \
+  --query "Stacks[0].Outputs[?OutputKey=='CreatedNetwork'].OutputValue" --output text)"
+echo "deploy: instance ${INSTANCE_ID} at ${PUBLIC_IP} (vpc ${STACK_VPC}, created-by-stack=${CREATED_NET})"
 
 if [ "${SKIP_HEALTH:-0}" = "1" ]; then
   echo "deploy: SKIP_HEALTH=1 — stack created, not waiting for the app."
