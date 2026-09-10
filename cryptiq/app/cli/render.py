@@ -260,6 +260,26 @@ def render_cli_finding(finding: CliFinding) -> str:
             ],
         ),
     ]
+    if finding.contextual_assessment:
+        ca = finding.contextual_assessment
+        sources = ca.get("knowledge_sources") or []
+        citations = [f"{s.get('document_id')} ({s.get('section')})" for s in sources[:3]]
+        blocks.append(
+            _section(
+                "CONTEXT-AWARE MIGRATION ASSESSMENT",
+                [
+                    ("Decision", ca.get("assessment")),
+                    ("Confidence", ca.get("confidence")),
+                    ("Contextual Role", ca.get("contextual_role")),
+                    ("PQC Migration Required", "Yes" if ca.get("pqc_migration_required") else "No"),
+                    ("Candidate", ca.get("migration_candidate")),
+                    ("Rationale", ca.get("rationale")),
+                    ("Engineering Trade-offs", ca.get("engineering_tradeoffs") or []),
+                    ("Authoritative Citations", citations or []),
+                    ("Limitations", ca.get("limitations") or []),
+                ],
+            )
+        )
     return "\n\n".join("\n".join(block) for block in blocks)
 
 

@@ -98,6 +98,9 @@ class CliFinding:
     review_note: str | None = None
     review_updated_at: str | None = None
 
+    # -- context-aware migration advisor ---------------------------------
+    contextual_assessment: dict[str, Any] | None = None
+
     # ------------------------------------------------------------------ #
     # ordering
     # ------------------------------------------------------------------ #
@@ -125,7 +128,12 @@ class CliFinding:
     # ------------------------------------------------------------------ #
 
     @classmethod
-    def from_analyzed(cls, analyzed: AnalyzedFinding) -> CliFinding:
+    def from_analyzed(
+        cls,
+        analyzed: AnalyzedFinding,
+        *,
+        contextual_assessment: dict[str, Any] | None = None,
+    ) -> CliFinding:
         """Build from an in-process engine result (local mode)."""
         match = analyzed.match
         location = match.location
@@ -174,6 +182,7 @@ class CliFinding:
             priority_level=priority.level.value,
             priority_score=priority.score,
             priority_reasons=list(priority.reasons),
+            contextual_assessment=contextual_assessment,
         )
 
     @classmethod
@@ -257,6 +266,7 @@ class CliFinding:
             review_assignee=dto.get("assigned_to"),
             review_note=dto.get("note"),
             review_updated_at=dto.get("updated_at"),
+            contextual_assessment=dto.get("contextual_assessment"),
         )
 
     # ------------------------------------------------------------------ #
@@ -270,7 +280,7 @@ class CliFinding:
         plus the review block. Unavailable scalars are ``null`` (never a
         fabricated value); the human renderer shows ``N/A`` for them.
         """
-        return {
+        payload = {
             "id": self.finding_id,
             "fingerprint": self.fingerprint,
             "scan_id": self.scan_id,
@@ -323,6 +333,9 @@ class CliFinding:
                 "updated_at": self.review_updated_at,
             },
         }
+        if self.contextual_assessment is not None:
+            payload["contextual_assessment"] = self.contextual_assessment
+        return payload
 
     @property
     def priority_rank(self) -> int:

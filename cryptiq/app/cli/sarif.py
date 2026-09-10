@@ -113,6 +113,7 @@ def _result(finding: CliFinding, rule_id: str) -> dict[str, Any]:
             "priorityScore": finding.priority_score,
             "isMigrationCandidate": finding.is_migration_candidate,
             "reviewStatus": finding.review_status,
+            **({"contextualAssessment": finding.contextual_assessment} if finding.contextual_assessment else {}),
         },
     }
 

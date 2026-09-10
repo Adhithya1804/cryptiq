@@ -172,7 +172,25 @@ def _scan_local(args: argparse.Namespace, commit: str | None) -> int:
     with local_analysis(
         args.target, commit=commit, include_all=args.include_all
     ) as (result, meta):
-        findings = _dedupe([CliFinding.from_analyzed(f) for f in result.findings])
+        domain_name = getattr(args, "domain", None)
+        advisor = None
+        domain_profile = None
+        if domain_name:
+            from app.engine.context.models import DomainProfile
+            from app.services.context_advisor import ContextAdvisorService
+
+            domain_profile = DomainProfile(domain=domain_name.strip().upper())
+            advisor = ContextAdvisorService()
+
+        findings_list = []
+        for f in result.findings:
+            ca_dict = None
+            if advisor is not None and domain_profile is not None:
+                assessment = advisor.assess_analyzed_finding(f, domain_profile=domain_profile)
+                ca_dict = assessment.to_dict()
+            findings_list.append(CliFinding.from_analyzed(f, contextual_assessment=ca_dict))
+
+        findings = _dedupe(findings_list)
         findings.sort(key=lambda f: f.sort_key)
 
         if fmt == "sarif":
@@ -503,6 +521,13 @@ def cmd_findings(client_factory: Callable[[str | None], CryptiqClient], args: ar
 def cmd_finding(client_factory: Callable[[str | None], CryptiqClient], args: argparse.Namespace) -> int:
     with client_factory(args.api_url) as client:
         finding = client.get_finding(args.finding_id)
+        domain = getattr(args, "domain", None)
+        if domain:
+            try:
+                assessment = client.get_migration_assessment(args.finding_id, domain=domain)
+                finding["contextual_assessment"] = assessment
+            except Exception:
+                pass
     if args.json:
         _print_json(finding)
     elif args.grouped:
@@ -736,6 +761,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_scan.add_argument("--poll-interval", type=float, default=2.0, dest="poll_interval")
     p_scan.add_argument("--timeout", type=float, default=600.0)
+    p_scan.add_argument(
+        "--domain",
+        "--context",
+        dest="domain",
+        default=None,
+        help="Optional domain profile for context-aware migration assessment (e.g. autonomous-drone, fintech, cloud).",
+    )
     _add_json(p_scan)
     p_scan.set_defaults(func=cmd_scan, needs_client=True)
 
@@ -789,6 +821,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--grouped",
         action="store_true",
         help="Use the OBSERVED/INFERENCE/... block layout.",
+    )
+    p_finding.add_argument(
+        "--domain",
+        "--context",
+        dest="domain",
+        default=None,
+        help="Optional domain profile for context-aware migration assessment.",
     )
     _add_json(p_finding)
     p_finding.set_defaults(func=cmd_finding, needs_client=True)

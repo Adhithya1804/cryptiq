@@ -136,6 +136,12 @@ class CryptiqClient:
     def update_review_item(self, review_id: str, body: dict[str, Any]) -> dict:
         return self._request("PATCH", f"/review-items/{review_id}", json=body)
 
+    def get_migration_assessment(
+        self, finding_id: str, domain: str | None = None
+    ) -> dict[str, Any]:
+        params = {"domain": domain} if domain else None
+        return self._request("GET", f"/findings/{finding_id}/migration-assessment", params=params)
+
     def health(self) -> dict:
         return self._request("GET", "/health")
 
